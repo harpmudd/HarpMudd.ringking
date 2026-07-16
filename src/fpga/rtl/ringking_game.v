@@ -71,6 +71,15 @@ module ringking_game (
 
     wire resetn = rom_loaded & ~reset;
 
+    // ===== Board variant (snooped from the ROM image during load) =============
+    // 0 = Ring King board, 1 = King of Boxer board. Same game, different board:
+    // different memory maps, different AY IO ports, a scrambled spriteram offset,
+    // and a bg that comes from the sprite gfx instead of a dedicated gfx4.
+    // (The gfx/palette bit-packing differences are normalised by pack_rom, so the
+    // decode paths below are shared.)
+    reg kob = 1'b0;                                   // 1 = King of Boxer board
+    always @(posedge clk_sys) if (ld & (dn_addr == 19'h4C200)) kob <= dn_data[0];
+
     // =========================================================================
     // ROM image write ports (byte load, dn_addr into the flat image). All BRAM
     // ROM regions are power-of-2 aligned so each write uses a PURE BIT-SLICE
@@ -141,12 +150,19 @@ module ringking_game (
     );
     wire m_wr = cen_cpu & ~m_wr_n & ~m_mreq_n;
 
-    // region selects
+    // region selects. Same sizes on both boards, different bases:
+    //             Ring King        King of Boxer
+    //   share2    C800-CFFF        E000-E7FF
+    //   share1    D000-D7FF        E800-EFFF
+    //   inputs    E000-E005        FC00-FC05
     wire m_sel_rom  = (m_addr <  16'hC000);
     wire m_sel_work = (m_addr >= 16'hC000) && (m_addr < 16'hC400);
-    wire m_sel_s2   = (m_addr >= 16'hC800) && (m_addr < 16'hD000);   // share2
-    wire m_sel_s1   = (m_addr >= 16'hD000) && (m_addr < 16'hD800);   // share1
-    wire m_sel_io   = (m_addr >= 16'hE000) && (m_addr < 16'hE006);
+    wire m_sel_s2   = kob ? ((m_addr >= 16'hE000) && (m_addr < 16'hE800))
+                          : ((m_addr >= 16'hC800) && (m_addr < 16'hD000));
+    wire m_sel_s1   = kob ? ((m_addr >= 16'hE800) && (m_addr < 16'hF000))
+                          : ((m_addr >= 16'hD000) && (m_addr < 16'hD800));
+    wire m_sel_io   = kob ? ((m_addr >= 16'hFC00) && (m_addr < 16'hFC06))
+                          : ((m_addr >= 16'hE000) && (m_addr < 16'hE006));
     wire m_sel_f7   = (m_addr >= 16'hF000) && (m_addr < 16'hF800);   // f000-f7ff ram
 
     // MAIN work ram (C000-C3FF, 1K) + F000-F7FF ram (2K)
@@ -169,14 +185,26 @@ module ringking_game (
         spr_int_set <= 1'b0; vid_int_set <= 1'b0; snd_int_set <= 1'b0;
         if (!resetn) begin f800_reg <= 8'h00; end
         else if (m_wr) begin
-            case (m_addr)
-                16'hD800: f800_reg   <= m_dout;         // f800_w
-                16'hD801: spr_int_set <= 1'b1;          // -> sprite INT
-                16'hD802: vid_int_set <= 1'b1;          // -> video INT
-                16'hD803: begin soundlatch <= m_dout; snd_int_set <= 1'b1; end
-                16'hE800: scroll_y   <= m_dout;
-                default: ;
-            endcase
+            if (kob) begin                              // King of Boxer board
+                case (m_addr)
+                    16'hF800: f800_reg <= m_dout;       // NMI enable + palette bank
+                    16'hF802: scroll_y <= m_dout;
+                    // F803 = scroll_interrupt_w: sprite INT *and* writes scroll_y
+                    16'hF803: begin spr_int_set <= 1'b1; scroll_y <= m_dout; end
+                    16'hF804: vid_int_set <= 1'b1;
+                    16'hF807: begin soundlatch <= m_dout; snd_int_set <= 1'b1; end
+                    default: ;
+                endcase
+            end else begin                              // Ring King board
+                case (m_addr)
+                    16'hD800: f800_reg   <= m_dout;     // f800_w
+                    16'hD801: spr_int_set <= 1'b1;      // -> sprite INT
+                    16'hD802: vid_int_set <= 1'b1;      // -> video INT
+                    16'hD803: begin soundlatch <= m_dout; snd_int_set <= 1'b1; end
+                    16'hE800: scroll_y   <= m_dout;
+                    default: ;
+                endcase
+            end
         end
     end
     wire nmi_enable = f800_reg[5];
@@ -191,7 +219,14 @@ module ringking_game (
     wire [7:0] p2 = ~{2'b00, cont2_key[4], cont2_key[5], cont2_key[2],
                       cont2_key[3], cont2_key[1], cont2_key[0]};
     wire [7:0] sys = ~{4'b0000, cont2_key[15], cont1_key[15], cont2_key[14], cont1_key[14]};
-    localparam [7:0] DSW1 = 8'hFF, DSW2 = 8'hFF, EXTRA = 8'hFF;   // Stage 2: real defaults
+    // MAME factory DIP defaults. The two boards have DIFFERENT INPUT_PORTS:
+    //   kingofb DSW1 bit7 = PORT_SERVICE, ACTIVE **HIGH** -> it must read 0 or the
+    //   game boots straight into its test grid and sits there. (Ring King's service
+    //   bit is active-LOW, which is the only reason the old 0xFF placeholder worked.)
+    //   EXTRA bit0 = BUTTON3, active high -> 0 = not pressed.
+    wire [7:0] DSW1  = kob ? 8'h21 : 8'h97;
+    wire [7:0] DSW2  = kob ? 8'h00 : 8'hDF;
+    wire [7:0] EXTRA = 8'h00;
     reg [7:0] m_io_q;
     always @(*) case (m_addr[2:0])
         3'd0: m_io_q = DSW1; 3'd1: m_io_q = DSW2; 3'd2: m_io_q = p1;
@@ -229,13 +264,24 @@ module ringking_game (
     wire v_wr = cen_cpu & ~v_wr_n & ~v_mreq_n;
     wire v_intack = ~v_m1_n & ~v_iorq_n;
 
+    //             Ring King        King of Boxer
+    //   share1    C000-C7FF        A000-A7FF
+    //   fg vram   A000-A3FF        C800-CBFF
+    //   fg cram   A400-A7FF        CC00-CFFF
+    //   bg vram   A800-A8FF        C000-C0FF
+    //   bg cram   AC00-ACFF        C400-C4FF
     wire v_sel_rom  = (v_addr <  16'h4000);
     wire v_sel_work = (v_addr >= 16'h8000) && (v_addr < 16'h8800);
-    wire v_sel_fgv  = (v_addr >= 16'hA000) && (v_addr < 16'hA400);   // videoram2 (fg)
-    wire v_sel_fgc  = (v_addr >= 16'hA400) && (v_addr < 16'hA800);   // colorram2 (fg)
-    wire v_sel_bgv  = (v_addr >= 16'hA800) && (v_addr < 16'hA900);   // videoram (bg)
-    wire v_sel_bgc  = (v_addr >= 16'hAC00) && (v_addr < 16'hAD00);   // colorram (bg)
-    wire v_sel_s1   = (v_addr >= 16'hC000) && (v_addr < 16'hC800);   // share1
+    wire v_sel_fgv  = kob ? ((v_addr >= 16'hC800) && (v_addr < 16'hCC00))
+                          : ((v_addr >= 16'hA000) && (v_addr < 16'hA400));
+    wire v_sel_fgc  = kob ? ((v_addr >= 16'hCC00) && (v_addr < 16'hD000))
+                          : ((v_addr >= 16'hA400) && (v_addr < 16'hA800));
+    wire v_sel_bgv  = kob ? ((v_addr >= 16'hC000) && (v_addr < 16'hC100))
+                          : ((v_addr >= 16'hA800) && (v_addr < 16'hA900));
+    wire v_sel_bgc  = kob ? ((v_addr >= 16'hC400) && (v_addr < 16'hC500))
+                          : ((v_addr >= 16'hAC00) && (v_addr < 16'hAD00));
+    wire v_sel_s1   = kob ? ((v_addr >= 16'hA000) && (v_addr < 16'hA800))
+                          : ((v_addr >= 16'hC000) && (v_addr < 16'hC800));
 
     reg [7:0] v_work [0:2047];  reg [7:0] v_work_q;
     always @(posedge clk_sys) begin
@@ -357,11 +403,18 @@ module ringking_game (
     wire sp_wr = cen_cpu & ~sp_wr_n & ~sp_mreq_n;
     wire sp_intack = ~sp_m1_n & ~sp_iorq_n;
 
+    //              Ring King       King of Boxer
+    //   share2     C800-CFFF       A000-A7FF
+    //   spriteram  A000-A3FF       C000-C3FF
+    //   a4 ram     A400-A43F       C400-C43F
     wire sp_sel_rom  = (sp_addr <  16'h2000);
     wire sp_sel_work = (sp_addr >= 16'h8000) && (sp_addr < 16'h8800);
-    wire sp_sel_spr  = (sp_addr >= 16'hA000) && (sp_addr < 16'hA400);   // spriteram
-    wire sp_sel_a4   = (sp_addr >= 16'hA400) && (sp_addr < 16'hA440);   // ram (scroll?)
-    wire sp_sel_s2   = (sp_addr >= 16'hC800) && (sp_addr < 16'hD000);   // share2
+    wire sp_sel_spr  = kob ? ((sp_addr >= 16'hC000) && (sp_addr < 16'hC400))
+                           : ((sp_addr >= 16'hA000) && (sp_addr < 16'hA400));
+    wire sp_sel_a4   = kob ? ((sp_addr >= 16'hC400) && (sp_addr < 16'hC440))
+                           : ((sp_addr >= 16'hA400) && (sp_addr < 16'hA440));
+    wire sp_sel_s2   = kob ? ((sp_addr >= 16'hA000) && (sp_addr < 16'hA800))
+                           : ((sp_addr >= 16'hC800) && (sp_addr < 16'hD000));
 
     reg [7:0] sp_work [0:2047];  reg [7:0] sp_work_q;
     reg [7:0] sp_a4   [0:63];    reg [7:0] sp_a4_q;
@@ -426,8 +479,9 @@ module ringking_game (
     wire sd_io    = ~sd_iorq_n & sd_m1_n;
     wire sd_io_wr = cen_cpu & sd_io & ~sd_wr_n;
     wire sd_io_rd = sd_io & ~sd_rd_n;
-    wire ay_data_we = sd_io_wr & (sd_addr[7:0] == 8'h02);
-    wire ay_addr_we = sd_io_wr & (sd_addr[7:0] == 8'h03);
+    // King of Boxer puts the AY on 0x08 (data) / 0x0c (address) instead; DAC is 0x00 on both.
+    wire ay_data_we = sd_io_wr & (sd_addr[7:0] == (kob ? 8'h08 : 8'h02));
+    wire ay_addr_we = sd_io_wr & (sd_addr[7:0] == (kob ? 8'h0C : 8'h03));
     wire dac_we     = sd_io_wr & (sd_addr[7:0] == 8'h00);
 
     reg [7:0] dac_val = 8'd0;                      // 8-bit R2R DAC latch
@@ -637,10 +691,24 @@ module ringking_game (
     reg [7:0]  rline;
     reg        bank_l;  reg [4:0] color_l;
     reg [7:0]  L0,L1,L2, R0,R1,R2;           // latched plane bytes (0=MSB..2=LSB)
-    // is this sprite on the target line? row = rline - sy; flipy = ~attr[7]
+    // King of Boxer scrambles the spriteram offset:
+    //   roffs = bitswap<16>(offs,15..10,4,7,6,5,9,8,3,2,1,0) ^ 0x3c
+    //   if (roffs & 0x200) roffs ^= 0x1c0
+    // offs = spr_i*4, so offs[9:2] = spr_i and roffs stays 4-aligned. Folding the
+    // 0x200 fixup in gives roffs[9:2] directly:
+    wire [7:0] spr_scr = { spr_i[2],
+                           spr_i[5] ^ spr_i[2],
+                           spr_i[4] ^ spr_i[2],
+                           spr_i[3] ^ spr_i[2],
+                           ~spr_i[7], ~spr_i[6], ~spr_i[1], ~spr_i[0] };
+    wire [7:0] spr_base = kob ? spr_scr : spr_i;
+
+    // is this sprite on the target line? row = rline - sy.
+    // flipy polarity is INVERTED between the boards: Ring King ~attr[7], KoB attr[7].
     wire [7:0] srow = rline - s_sy;
     wire       on_line = (srow < 8'd16);
-    wire [3:0] yr = s_attr[7] ? srow[3:0] : (4'd15 - srow[3:0]);
+    wire       spr_flipy = kob ? s_attr[7] : ~s_attr[7];
+    wire [3:0] yr = spr_flipy ? (4'd15 - srow[3:0]) : srow[3:0];
     // combinational sprite pixel from latched plane bytes (bit = col&7, half = col[3])
     wire [2:0] cb = wcol[2:0];
     wire [2:0] sp_pix3 = wcol[3] ? {R0[cb], R1[cb], R2[cb]} : {L0[cb], L1[cb], L2[cb]};
@@ -660,12 +728,15 @@ module ringking_game (
             SE_RD: begin                         // read 4 sprite bytes. spr_eq is a
                 // REGISTERED read: addr set at rd_k=K -> spr_eq usable at rd_k=K+2.
                 // So present addr0..3 at rd_k 0..3, latch bytes at rd_k 2..5.
-                spr_eaddr <= {spr_i, rd_k[1:0]};
+                spr_eaddr <= {spr_base, rd_k[1:0]};
+                // field order differs by board:
+                //   Ring King     : [0]=sy [1]=attr [2]=sx   [3]=code
+                //   King of Boxer : [0]=sy [1]=sx   [2]=code [3]=attr
                 case (rd_k)
-                    3'd2: s_sy   <= spr_eq;       // byte0 = sy
-                    3'd3: s_attr <= spr_eq;       // byte1 = attr
-                    3'd4: s_sx   <= spr_eq;       // byte2 = sx
-                    3'd5: s_code <= spr_eq;       // byte3 = code lo
+                    3'd2: s_sy <= spr_eq;                          // byte0 = sy (both)
+                    3'd3: if (kob) s_sx   <= spr_eq; else s_attr <= spr_eq;
+                    3'd4: if (kob) s_code <= spr_eq; else s_sx   <= spr_eq;
+                    3'd5: if (kob) s_attr <= spr_eq; else s_code <= spr_eq;
                 endcase
                 if (rd_k == 3'd5) se <= SE_CHK; else rd_k <= rd_k + 3'd1;
             end

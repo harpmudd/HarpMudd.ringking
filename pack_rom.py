@@ -44,7 +44,16 @@ DEFAULT_ZIP_DIR = next(
      if d and os.path.isdir(d)),
     HERE)
 ASSETS_DIR     = os.path.join(HERE, "dist", "Assets", "ringking", "common")
-ROM_IMAGE_SIZE = 0x4C200
+
+# 0x4C200 = board variant byte, snooped by the FPGA during load:
+#   0 = Ring King board (dedicated gfx4 bg, D800/E000 maps, AY at 02/03)
+#   1 = King of Boxer board (bg from the sprite gfx, F800/FC00 maps, AY at 08/0c)
+# The image is padded past it on purpose: a variant byte sitting in the image's
+# LAST 32-bit word does not reliably land (see the multi-game notes).
+VARIANT_OFFSET = 0x4C200
+ROM_IMAGE_SIZE = 0x4C210
+VAR_RINGKING = 0
+VAR_KINGOFB  = 1
 
 # The two supported sets run on IDENTICAL hardware (same machine config, video,
 # PROMs and sound IO), so the FPGA needs no variant byte -- they differ only in
@@ -91,10 +100,116 @@ RINGKING2_DEFS = COMMON_DEFS + [
 # name -> (defs, output .rom, description, needed romsets)
 GAMES = {
     "ringking":  (RINGKING_DEFS,  "ringking.rom",  "Ring King (US set 1)",
-                  "ringking.zip + kingofb.zip"),
+                  "ringking.zip + kingofb.zip", VAR_RINGKING),
     "ringking2": (RINGKING2_DEFS, "ringking2.rom", "Ring King (US set 2)",
-                  "ringking2.zip + kingofb.zip"),
+                  "ringking2.zip + kingofb.zip", VAR_RINGKING),
+    # defs = None -> built by build_kingofb() (normalising path, see below)
+    "kingofb":   (None, "kingofb.rom", "King of Boxer (World)", "kingofb.zip",
+                  VAR_KINGOFB),
 }
+
+# =============================================================================
+# King of Boxer group (kingofb / kingofbj / ringkingw / ringking3)
+# -----------------------------------------------------------------------------
+# Same game, DIFFERENT board: the gfx ROMs use a completely different bit packing
+# and the palette is 3 separate R/G/B PROMs instead of 2 packed ones. The pixel
+# ART is identical to Ring King's -- only the packing differs -- so rather than
+# give the FPGA a second decode path we NORMALISE here at build time: decode with
+# the kingofb layout, re-encode into the Ring King layout. The core's existing
+# gfx decode then renders these sets unchanged. (Verified by round-trip: decode
+# -> re-encode -> decode is pixel-identical.)
+#
+# The one thing that cannot be normalised is the background: Ring King has a
+# dedicated gfx4, kingofb has none and draws its bg out of the sprite gfx with a
+# 10-bit code + bank. That stays an RTL variant (see core_game.vh / the variant
+# byte), and gfx4 is simply left blank for these sets.
+# =============================================================================
+
+# kingofb native regions: (crc, size, dest_offset_within_region)
+KINGOFB_GFX1 = [(0xe36d4f4f, 0x2000, 0x0000)]                       # chars (8K)
+KINGOFB_GFX2 = [(0xce6580af, 0x4000, 0x00000), (0xcf74ea50, 0x4000, 0x04000),
+                (0xd8b53975, 0x4000, 0x08000), (0x4ab506d2, 0x4000, 0x0c000),
+                (0xecf95a2c, 0x4000, 0x10000), (0x8200cb2b, 0x4000, 0x14000)]
+KINGOFB_GFX3 = [(0x3d472a22, 0x2000, 0x0000), (0xcc002ea9, 0x2000, 0x2000),
+                (0x23c1b3ee, 0x2000, 0x4000), (0xd6b1b8fe, 0x2000, 0x6000),
+                (0xfce71e5a, 0x2000, 0x8000), (0x3f68b991, 0x2000, 0xa000)]
+# CPU ROMs are plain copies into our image layout
+KINGOFB_CPU = [
+    (0x6220bfa2, 0x4000, "22.d9  (main 0000-3FFF)",   0x00000),
+    (0x5782fdd8, 0x4000, "23.e9  (main 4000-7FFF)",   0x04000),
+    (0x3fb39489, 0x4000, "21.b9  (video 0000-3FFF)",  0x0C000),
+    (0xc057e28e, 0x4000, "18.f4  (sound 0000-3FFF)",  0x10000),
+    (0x060253dd, 0x4000, "19.h4  (sound 4000-7FFF)",  0x14000),
+    (0x64c137a4, 0x4000, "20.j4  (sound 8000-BFFF)",  0x18000),
+    (0x379f4f84, 0x2000, "17.j9  (sprite 0000-1FFF)", 0x1C000),
+]
+# 3 separate 4-bit PROMs: R, G, B
+KINGOFB_PROMS = [(0xc58e5121, "R"), (0x5ab06f25, "G"), (0x1171743f, "B")]
+
+
+def _rdbit(buf, o):
+    return (buf[o >> 3] >> (7 - (o & 7))) & 1
+
+
+def _wrbit(buf, o, v):
+    if v:
+        buf[o >> 3] |= 1 << (7 - (o & 7))
+
+
+def _assemble(found, parts, size):
+    """Concatenate raw ROMs into a native region. Returns None if any is missing."""
+    buf = bytearray(size)
+    for crc, sz, off in parts:
+        d = found.get(crc)
+        if d is None or len(d) != sz:
+            return None
+        buf[off:off + sz] = d
+    return buf
+
+
+def normalise_kingofb_gfx(g1, g2, g3):
+    """kingofb packing -> Ring King packing (same pixels, different bit layout)."""
+    # ---- chars: kingofb charlayout (bank = a 0x1000 byte offset, MSB-first x)
+    #      -> rk_charlayout1/2 (bank = nibble; right half of a row at byte +0x1000)
+    out1 = bytearray(0x2000)
+    for bank in range(2):
+        for code in range(512):
+            for y in range(8):
+                for x in range(8):
+                    px = _rdbit(g1, (bank * 0x1000 + code * 8 + y) * 8 + x)
+                    if not px:
+                        continue
+                    byte = code * 8 + (7 - y) + (0x1000 if x >= 4 else 0)
+                    bit = (4 + (x & 3)) if bank else (x & 3)
+                    out1[byte] |= 1 << bit
+    # ---- 16x16 3bpp: kingofb spritelayout/tilelayout -> rk_spritelayout/rk_tilelayout
+    def conv16(src, ntiles, kb_unit, rk_unit, out_size):
+        out = bytearray(out_size)
+        kb_plane = [2 * kb_unit * 8, 1 * kb_unit * 8, 0]
+        kb_x = [3 * kb_unit * 8 + i for i in range(8)] + list(range(8))
+        rk_plane = [0, 1 * rk_unit * 8, 2 * rk_unit * 8]
+        rk_x = [7, 6, 5, 4, 3, 2, 1, 0] + [16 * 8 + i for i in (7, 6, 5, 4, 3, 2, 1, 0)]
+        for code in range(ntiles):
+            for y in range(16):
+                yo = y * 8
+                for x in range(16):
+                    for p in range(3):
+                        if _rdbit(src, code * 128 + kb_plane[p] + kb_x[x] + yo):
+                            _wrbit(out, code * 256 + rk_plane[p] + rk_x[x] + yo, 1)
+        return out
+    out2 = conv16(g2, 1024, 0x4000, 0x8000, 0x18000)   # sprites
+    out3 = conv16(g3, 512,  0x2000, 0x4000, 0x0C000)   # tiles
+    return out1, out2, out3
+
+
+def normalise_kingofb_proms(r, g, b):
+    """3 x 4-bit PROMs (R/G/B) -> our 2-PROM packed format: [0]=R<<4|G, [1]=B."""
+    p0 = bytearray(0x100)
+    p1 = bytearray(0x100)
+    for i in range(0x100):
+        p0[i] = ((r[i] & 0x0F) << 4) | (g[i] & 0x0F)
+        p1[i] = b[i] & 0x0F
+    return p0, p1
 
 
 def crc32_of(data):
@@ -113,8 +228,56 @@ def load_dir_by_crc(zip_dir):
     return found
 
 
+def build_kingofb(game, found):
+    """King of Boxer group: plain CPU ROMs + NORMALISED gfx/palette."""
+    _, out_name, desc, romsets, variant = GAMES[game]
+    out_rom = os.path.join(ASSETS_DIR, out_name)
+    print(f"\n=== {desc} ({game}) -> {out_name} ===")
+    image = bytearray(b"\xFF" * ROM_IMAGE_SIZE)
+
+    # CPU ROMs (plain copies)
+    for (crc, size, d, offset) in KINGOFB_CPU:
+        data = found.get(crc)
+        if data is None or len(data) != size:
+            print(f"  MISSING/BAD  {d}  (CRC {crc:08x})")
+            print(f"  -- {game} needs: {romsets}")
+            return False
+        image[offset:offset + size] = data
+        print(f"  OK   {d}  @ 0x{offset:05X}")
+
+    # native gfx regions
+    g1 = _assemble(found, KINGOFB_GFX1, 0x2000)
+    g2 = _assemble(found, KINGOFB_GFX2, 0x18000)
+    g3 = _assemble(found, KINGOFB_GFX3, 0x0C000)
+    proms = [found.get(c) for c, _ in KINGOFB_PROMS]
+    if g1 is None or g2 is None or g3 is None or any(p is None for p in proms):
+        print(f"  MISSING gfx/PROM ROMs -- {game} needs: {romsets}")
+        return False
+
+    print("  normalising gfx (kingofb packing -> Ring King packing)...")
+    n1, n2, n3 = normalise_kingofb_gfx(g1, g2, g3)
+    image[0x1E000:0x1E000 + len(n1)] = n1       # gfx1 chars
+    image[0x20000:0x20000 + len(n2)] = n2       # gfx2 sprites
+    image[0x38000:0x38000 + len(n3)] = n3       # gfx3 tiles
+    # gfx4 (0x44000) intentionally left blank: this board has no dedicated bg gfx,
+    # it draws the bg out of the sprite gfx (an RTL variant, not a data one).
+    p0, p1 = normalise_kingofb_proms(*proms)
+    image[0x4C000:0x4C100] = p0
+    image[0x4C100:0x4C200] = p1
+    image[VARIANT_OFFSET] = variant
+    print("  OK   gfx1/gfx2/gfx3 normalised, 3 PROMs -> 2 packed")
+
+    os.makedirs(os.path.dirname(out_rom), exist_ok=True)
+    with open(out_rom, "wb") as f:
+        f.write(image)
+    print(f"  SUCCESS: {len(image)} bytes -> {out_rom}")
+    return True
+
+
 def build(game, found):
-    defs, out_name, desc, romsets = GAMES[game]
+    defs, out_name, desc, romsets, variant = GAMES[game]
+    if defs is None:                 # King of Boxer group uses the normalising path
+        return build_kingofb(game, found)
     out_rom = os.path.join(ASSETS_DIR, out_name)
     print(f"\n=== {desc} ({game}) -> {out_name} ===")
     image = bytearray(b"\xFF" * ROM_IMAGE_SIZE)
@@ -135,10 +298,11 @@ def build(game, found):
             print(e)
         print(f"  -- {game} needs: {romsets}")
         return False
+    image[VARIANT_OFFSET] = variant
     os.makedirs(os.path.dirname(out_rom), exist_ok=True)
     with open(out_rom, "wb") as f:
         f.write(image)
-    print(f"  SUCCESS: {len(image)} bytes -> {out_rom}")
+    print(f"  SUCCESS: {len(image)} bytes (variant {variant}) -> {out_rom}")
     return True
 
 
