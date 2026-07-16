@@ -54,9 +54,9 @@ from the hardware description:
 | Pocket | Action |
 |---|---|
 | **D-Pad** | Move (8-way) |
-| **A** | Punch / action (button 2) |
-| **B** | Punch / action (button 1) |
-| **X** | Button 3 |
+| **A** | Hook / Uppercut (button 2) |
+| **B** | Straight / Jab (button 1) |
+| **X** | Defense / Block (button 3) |
 | **Start** | 1P Start |
 | **Select** | Insert coin |
 
