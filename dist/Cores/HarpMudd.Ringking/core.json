@@ -4,10 +4,10 @@
         "metadata": {
             "platform_ids": ["ringking"],
             "shortname": "Ringking",
-            "description": "Ring King (Woodplace / Data East, 1985)",
+            "description": "Ring King (Woodplace / Data East, 1985) - US sets 1 and 2",
             "author": "HarpMudd",
             "url": "https://github.com/harpmudd/HarpMudd.ringking",
-            "version": "1.0.0",
+            "version": "1.1.0",
             "date_release": "2026-07-16"
         },
         "framework": {

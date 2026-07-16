@@ -59,19 +59,32 @@ from the hardware description:
 | **Start** | 1P Start |
 | **Select** | Insert coin |
 
+## Games
+
+Two sets run on this one core — pick the game from the Pocket menu:
+
+| Game | Romset |
+|---|---|
+| **Ring King (US set 1)** | `ringking.zip` + `kingofb.zip` |
+| **Ring King (US set 2)** | `ringking2.zip` + `kingofb.zip` |
+
+Both are the same board, so both run on the same bitstream; they differ only in
+the main and video CPU program ROMs. (`ringking`/`ringking2` are clones of
+`kingofb` and take a file from the parent, hence the second zip.)
+
 ## ROMs
 
 ROMs are **not** included — nothing in this repo contains copyrighted data.
-Supply your own MAME romset for the **`ringking`** set (US set 1). It is a clone
-of `kingofb` and shares a file with the parent, so keep **both** `ringking.zip`
-and `kingofb.zip` handy, then build the `.rom` image:
+Supply your own MAME romsets, then build the `.rom` images:
 
 ```
-python pack_rom.py
+python pack_rom.py            # builds every set it can find
+python pack_rom.py ringking   # or just one
 ```
 
-It matches the required files by CRC32 and writes `ringking.rom` into
-`Assets/ringking/common/`. Copy the contents of `dist/` to your Pocket SD card.
+It matches the required files by CRC32 and writes `ringking.rom` /
+`ringking2.rom` into `Assets/ringking/common/`. A set whose romset you don't
+have is simply skipped. Copy the contents of `dist/` to your Pocket SD card.
 
 ## Credits
 

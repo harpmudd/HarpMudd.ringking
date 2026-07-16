@@ -44,16 +44,13 @@ DEFAULT_ZIP_DIR = next(
      if d and os.path.isdir(d)),
     HERE)
 ASSETS_DIR     = os.path.join(HERE, "dist", "Assets", "ringking", "common")
-OUT_ROM        = os.path.join(ASSETS_DIR, "ringking.rom")
 ROM_IMAGE_SIZE = 0x4C200
 
+# The two supported sets run on IDENTICAL hardware (same machine config, video,
+# PROMs and sound IO), so the FPGA needs no variant byte -- they differ only in
+# the main + video CPU program ROMs. 14 of the 17 files are shared.
 # (CRC32, size, description, image_offset)
-ROM_DEFS = [
-    # main Z80 (0000-BFFF)
-    (0x93e38c02, 0x8000, "cx13.9f   (main 0000-7FFF)",   0x00000),
-    (0xa435acb0, 0x4000, "cx14.11f  (main 8000-BFFF)",   0x08000),
-    # video Z80 (0000-3FFF)
-    (0x9f074746, 0x4000, "cx07.10c  (video 0000-3FFF)",  0x0C000),
+COMMON_DEFS = [
     # sound Z80 (0000-BFFF) -- aligned to 0x10000 (pure-slice write index)
     (0x1d5d6c6b, 0x8000, "cx12.4ef  (sound 0000-7FFF)",  0x10000),
     (0x64c137a4, 0x4000, "20.j4     (sound 8000-BFFF)",  0x18000),
@@ -77,6 +74,28 @@ ROM_DEFS = [
     (0xd345cbb3, 0x0100, "82s129.1a (PROM blue)",        0x4C100),
 ]
 
+# Ring King (US set 1) -- the Data East USA license set. romset: ringking.zip
+RINGKING_DEFS = COMMON_DEFS + [
+    (0x93e38c02, 0x8000, "cx13.9f   (main 0000-7FFF)",   0x00000),
+    (0xa435acb0, 0x4000, "cx14.11f  (main 8000-BFFF)",   0x08000),
+    (0x9f074746, 0x4000, "cx07.10c  (video 0000-3FFF)",  0x0C000),
+]
+
+# Ring King (US set 2) -- same board, different main/video program. romset: ringking2.zip
+RINGKING2_DEFS = COMMON_DEFS + [
+    (0x086921ea, 0x8000, "rkngm1.bin   (main 0000-7FFF)",  0x00000),
+    (0xc0b636a4, 0x4000, "rkngm2.bin   (main 8000-BFFF)",  0x08000),
+    (0xd9dc1a0a, 0x4000, "rkngtram.bin (video 0000-3FFF)", 0x0C000),
+]
+
+# name -> (defs, output .rom, description, needed romsets)
+GAMES = {
+    "ringking":  (RINGKING_DEFS,  "ringking.rom",  "Ring King (US set 1)",
+                  "ringking.zip + kingofb.zip"),
+    "ringking2": (RINGKING2_DEFS, "ringking2.rom", "Ring King (US set 2)",
+                  "ringking2.zip + kingofb.zip"),
+}
+
 
 def crc32_of(data):
     return zlib.crc32(data) & 0xFFFFFFFF
@@ -94,11 +113,13 @@ def load_dir_by_crc(zip_dir):
     return found
 
 
-def build(found):
-    print("\n=== Ring King (ringking) -> ringking.rom ===")
+def build(game, found):
+    defs, out_name, desc, romsets = GAMES[game]
+    out_rom = os.path.join(ASSETS_DIR, out_name)
+    print(f"\n=== {desc} ({game}) -> {out_name} ===")
     image = bytearray(b"\xFF" * ROM_IMAGE_SIZE)
     errors = []
-    for (crc, size, d, offset) in ROM_DEFS:
+    for (crc, size, d, offset) in sorted(defs, key=lambda x: x[3]):
         if crc in found:
             data = found[crc]
             if len(data) != size:
@@ -112,18 +133,30 @@ def build(found):
         print("  -- MISSING/INVALID:")
         for e in errors:
             print(e)
+        print(f"  -- {game} needs: {romsets}")
         return False
-    os.makedirs(os.path.dirname(OUT_ROM), exist_ok=True)
-    with open(OUT_ROM, "wb") as f:
+    os.makedirs(os.path.dirname(out_rom), exist_ok=True)
+    with open(out_rom, "wb") as f:
         f.write(image)
-    print(f"  SUCCESS: {len(image)} bytes -> {OUT_ROM}")
+    print(f"  SUCCESS: {len(image)} bytes -> {out_rom}")
     return True
 
 
 def main():
     print(f"Scanning zips in: {DEFAULT_ZIP_DIR}")
     found = load_dir_by_crc(DEFAULT_ZIP_DIR)
-    sys.exit(0 if build(found) else 1)
+    # `python pack_rom.py [game ...]` -- default: build every set we can.
+    wanted = [a for a in sys.argv[1:] if not a.startswith("-")] or list(GAMES)
+    unknown = [g for g in wanted if g not in GAMES]
+    if unknown:
+        print(f"Unknown set(s): {', '.join(unknown)}.  Known: {', '.join(GAMES)}")
+        sys.exit(2)
+    results = {g: build(g, found) for g in wanted}
+    print("\n=== Summary ===")
+    for g, ok in results.items():
+        print(f"  {'OK     ' if ok else 'SKIPPED'} {g}  ({GAMES[g][2]})")
+    # A missing optional romset is not fatal -- succeed if at least one set built.
+    sys.exit(0 if any(results.values()) else 1)
 
 
 if __name__ == "__main__":
