@@ -54,10 +54,13 @@ from the hardware description:
 | Pocket | Action |
 |---|---|
 | **D-Pad** | Move (8-way) |
-| **A** | Punch / action |
-| **B** | Punch / action |
+| **A** | Punch / action (button 2) |
+| **B** | Punch / action (button 1) |
+| **X** | Button 3 |
 | **Start** | 1P Start |
 | **Select** | Insert coin |
+
+Two players use two controllers — the second pad's **Start** is 2P start.
 
 ## Games
 
