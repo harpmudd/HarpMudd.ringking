@@ -30,9 +30,9 @@ MCU and no encryption.
 
 ## The Build
 
-No MiSTer core exists for this hardware, so the RTL was written by
-reverse-mapping the original behaviour out of MAME's `dataeast/kingobox.cpp` and
-`kingobox_v.cpp`. Notable pieces, all implemented from the hardware description:
+The RTL was written by reverse-mapping the original behaviour out of MAME's
+`dataeast/kingobox.cpp` and `kingobox_v.cpp`. Notable pieces, all implemented
+from the hardware description:
 
 - **Quad Z80** (the `T80` core) on clock-enables in a single clock domain, with
   the two true-dual-port shared-RAM windows (main↔video, main↔sprite), the
