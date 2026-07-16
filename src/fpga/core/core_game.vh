@@ -56,6 +56,90 @@ data_loader #(
 
 always @(posedge clk_74a) if (dataslot_allcomplete) rom_loaded_74 <= 1'b1;
 
+// -- 2b. SDRAM: sprite gfx (gfx2 + gfx3) --------------------------------------
+// Runs on clk_sys (48 MHz) -- SAME domain as the sprite engine, so there is NO
+// CDC anywhere (no gray-coded dual-clock FIFO, no read handshake sync). Ring King
+// needs only ~64 reads/line against a 63us line, so 48 MHz is ample.
+// BURST_LENGTH=1 (single-word reads) ON PURPOSE: a native multi-word burst
+// mis-captures word1 under switching load -> data-dependent speckle (that is
+// rampage's open defect). Single reads avoid it by construction.
+//
+// PACKING: the 3 bitplanes of a pixel are interleaved so one plane-offset A maps
+// to two adjacent words:  word {bank,A,0} = {plane1, plane0}, {bank,A,1} = plane2.
+//   gfx2 (bank0, 3x32K): img 0x20000/0x28000/0x30000 -> word {0, A[14:0], hw}
+//   gfx3 (bank1, 3x16K): img 0x38000/0x3C000/0x40000 -> word {1, A[14:0], hw}
+wire        sdram_init_complete;
+reg  [24:0] p0_addr;
+reg  [15:0] p0_data;
+reg  [1:0]  p0_byte_en;
+wire [15:0] p0_q;
+reg         p0_wr_req, p0_rd_req;
+wire        p0_available, p0_ready;
+
+sdram #(.CLOCK_SPEED_MHZ(48), .BURST_LENGTH(1), .CAS_LATENCY(2)) u_sdram (
+    .clk(clk_sys), .reset(~pll_locked), .init_complete(sdram_init_complete),
+    .p0_addr(p0_addr), .p0_data(p0_data), .p0_byte_en(p0_byte_en), .p0_q(p0_q),
+    .p0_wr_req(p0_wr_req), .p0_rd_req(p0_rd_req), .p0_rd_page(1'b0),
+    .p0_available(p0_available), .p0_ready(p0_ready),
+    .SDRAM_DQ(dram_dq), .SDRAM_A(dram_a), .SDRAM_DQM(dram_dqm), .SDRAM_BA(dram_ba),
+    .SDRAM_nCS(), .SDRAM_nWE(dram_we_n), .SDRAM_nRAS(dram_ras_n), .SDRAM_nCAS(dram_cas_n),
+    .SDRAM_CKE(dram_cke), .SDRAM_CLK(dram_clk)
+);
+
+// ---- load path: decode the gfx2/gfx3 image regions -> interleaved word+byte_en
+wire dn_g2p0 = dn_wr && (dn_addr >= 19'h20000) && (dn_addr < 19'h28000);
+wire dn_g2p1 = dn_wr && (dn_addr >= 19'h28000) && (dn_addr < 19'h30000);
+wire dn_g2p2 = dn_wr && (dn_addr >= 19'h30000) && (dn_addr < 19'h38000);
+wire dn_g3p0 = dn_wr && (dn_addr >= 19'h38000) && (dn_addr < 19'h3C000);
+wire dn_g3p1 = dn_wr && (dn_addr >= 19'h3C000) && (dn_addr < 19'h40000);
+wire dn_g3p2 = dn_wr && (dn_addr >= 19'h40000) && (dn_addr < 19'h44000);
+wire dn_sg   = dn_g2p0|dn_g2p1|dn_g2p2|dn_g3p0|dn_g3p1|dn_g3p2;
+wire        sg_bank = dn_g3p0|dn_g3p1|dn_g3p2;                    // 1 = gfx3
+wire [14:0] sg_A    = sg_bank ? {1'b0, dn_addr[13:0]} : dn_addr[14:0];
+wire        sg_hw   = dn_g2p2 | dn_g3p2;                          // plane2 -> word+1
+wire [16:0] sg_word = {sg_bank, sg_A, sg_hw};
+wire [1:0]  sg_be   = (dn_g2p1 | dn_g3p1) ? 2'b10 : 2'b01;        // plane1 = high byte
+
+// ---- single-clock load FIFO (data_loader has no backpressure; SDRAM writes take
+// ~10 cyc). Depth 16; drains far faster than the loader fills. Same clock => no
+// gray coding needed.
+reg  [26:0] wf [0:15];                        // {word[16:0], be[1:0], data[7:0]}
+reg  [4:0]  wf_w = 5'd0, wf_r = 5'd0;
+wire        wf_empty = (wf_w == wf_r);
+wire [26:0] wf_dout  = wf[wf_r[3:0]];
+always @(posedge clk_sys) if (dn_sg) begin
+    wf[wf_w[3:0]] <= {sg_word, sg_be, dn_data};
+    wf_w <= wf_w + 5'd1;
+end
+
+// ---- sprite-engine read port (driven by ringking_game, same clk_sys domain)
+wire [16:0] sgfx_addr;
+wire        sgfx_req;
+wire        sgfx_ready;
+
+// ---- arbiter: LOAD drains the FIFO; PLAY serves sprite reads. They never
+// overlap (the load completes before the game runs), so this stays trivial.
+reg rd_busy = 1'b0;
+always @(posedge clk_sys) begin
+    p0_wr_req <= 1'b0;
+    p0_rd_req <= 1'b0;
+    if (sdram_init_complete) begin
+        if (!wf_empty && p0_available) begin
+            p0_addr    <= {8'd0, wf_dout[26:10]};
+            p0_byte_en <= wf_dout[9:8];
+            p0_data    <= {wf_dout[7:0], wf_dout[7:0]};
+            p0_wr_req  <= 1'b1;
+            wf_r       <= wf_r + 5'd1;
+        end else if (sgfx_req && !rd_busy && p0_available) begin
+            p0_addr   <= {8'd0, sgfx_addr};
+            p0_rd_req <= 1'b1;
+            rd_busy   <= 1'b1;
+        end
+        if (p0_ready && rd_busy) rd_busy <= 1'b0;
+    end
+end
+assign sgfx_ready = p0_ready & rd_busy;
+
 // -- 3. Reset -----------------------------------------------------------------
 wire reset_n_sys;
 synch_3 s_resetn (reset_n, reset_n_sys, clk_sys);
@@ -95,6 +179,13 @@ ringking_game u_game (
 
     .cont1_key (cont1_key),
     .cont2_key (cont2_key),
+
+    // sprite gfx (gfx2+gfx3) fetched from SDRAM (same clk_sys domain)
+    .sgfx_addr  (sgfx_addr),
+    .sgfx_req   (sgfx_req),
+    .sgfx_q     (p0_q),
+    .sgfx_ready (sgfx_ready),
+
     .audio (audio_raw)
 );
 

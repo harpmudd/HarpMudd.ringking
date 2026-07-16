@@ -1,64 +1,85 @@
-# Ring King (1985) — Analogue Pocket
+# Ring King — Analogue Pocket
 
-An Analogue Pocket port of **Ring King (1985)** (Woodplace / Data East, 1985) by
-**HarpMudd**, built on the openFPGA framework.
-
-<!-- TODO when porting: fill the TODO sections below. Pull the MiSTer/FPGA
-     author credits from the source headers, NOT memory:
-       grep -i "Port to MiSTer" <Arcade-X>.sv       -> MiSTer porter
-       grep -iE "copyright|by Dar|MikeJ" rtl/*.vhd   -> FPGA core author
-     Delete this comment and any unused sections (e.g. Notes & Caveats) when done. -->
+An Analogue Pocket core for the Woodplace / Data East *Ring King* arcade
+hardware, by **HarpMudd**, built on the openFPGA framework.
 
 ## The Game
 
-<!-- TODO: 1–2 paragraph high-level overview of the arcade game. -->
+*Ring King* (Data East USA, 1985 — known in Japan as *King of Boxer*) is a
+top-down boxing game. You fight your way up the rankings against a queue of
+increasingly vicious contenders, throwing high and low punches, ducking,
+weaving and pounding away at a stamina bar until somebody hits the canvas.
+Knock your opponent down and the referee starts the count; survive the rounds
+and you climb toward the championship belt.
 
 ## Hardware
 
+Woodplace / Data East "King of Boxer" board set:
+
 | Part | Role |
 |---|---|
-| <!-- TODO: CPU --> | Main CPU |
-| <!-- TODO: audio chip --> | Sound |
-| Display | <!-- TODO: e.g. Horizontal CRT, 15 kHz, RGB --> |
+| Zilog Z80 (×4) | Main + video + sprite + sound CPUs (4 MHz each) |
+| AY-3-8910 | Sound — 3-channel PSG (1.5 MHz) |
+| 8-bit R2R DAC | Sound — sampled audio |
+| Display | Vertical (ROT90) CRT, 256×224 visible, RGB |
 
-## The Port
+The unusual part is the CPU count: **four Z80s**. The main CPU runs the game and
+hands work to a dedicated video CPU and a dedicated sprite CPU through two
+shared-RAM windows, while a fourth Z80 drives the audio. There is no protection
+MCU and no encryption.
 
-Built on the MiSTer **Arcade-<!-- TODO -->** core:
+## The Build
 
-- **MiSTer port:** <!-- TODO: porter (from the top .sv "Port to MiSTer" header) -->
-- **FPGA arcade hardware implementation:** <!-- TODO: core author (from RTL copyright headers) -->
+No MiSTer core exists for this hardware, so the RTL was written by
+reverse-mapping the original behaviour out of MAME's `dataeast/kingobox.cpp` and
+`kingobox_v.cpp`. Notable pieces, all implemented from the hardware description:
 
-This Analogue Pocket build adapts that RTL to the openFPGA / APF framework.
-<!-- TODO: one line on resolution / orientation. --> Many thanks to the authors above.
+- **Quad Z80** (the `T80` core) on clock-enables in a single clock domain, with
+  the two true-dual-port shared-RAM windows (main↔video, main↔sprite), the
+  main-driven interrupts, and the vblank NMI gated by the `f800` latch.
+- **Three graphics layers:** a 1bpp packed-nibble character/foreground tilemap,
+  a 3bpp background tilemap with vertical scroll and palette banking, and a
+  16×16 3bpp sprite engine (both gfx banks) driven by a double line-buffer.
+  All tilemaps use the hardware's column-major, Y-flipped scan order.
+- **Colour** through the original resistor-weighted PROM palette, modelled as
+  the real linear resistor-ladder DAC.
+- **Sprite graphics streamed from SDRAM**, with the three bitplanes interleaved
+  so a single fetch yields a whole pixel.
+- **AY-3-8910** (tone / noise / envelope with the full datasheet shape rules,
+  port A wired to the sound latch) plus the 8-bit R2R DAC, mixed at the board's
+  ratio.
 
 ## Controls
 
 | Pocket | Action |
 |---|---|
-| **D-Pad** | <!-- TODO --> |
-| **A** | <!-- TODO --> |
+| **D-Pad** | Move (8-way) |
+| **A** | Punch / action |
+| **B** | Punch / action |
 | **Start** | 1P Start |
 | **Select** | Insert coin |
 
-## Notes & Caveats
-
-<!-- TODO: any per-core quirks (calibration steps, pending work, ROM variant
-     notes…). Delete this whole section if there are none. -->
-
 ## ROMs
 
-ROMs are **not** included. Build your own from the bundled `.mra` recipe in
-`Assets/ringking/common/` — it lists the required MAME romset files by name
-and CRC32, with no copyrighted data. Run it through the `mra` tool to produce
-`ringking.rom`, then keep that `.rom` in the same folder (and on your Pocket
-SD card).
+ROMs are **not** included — nothing in this repo contains copyrighted data.
+Supply your own MAME romset for the **`ringking`** set (US set 1). It is a clone
+of `kingofb` and shares a file with the parent, so keep **both** `ringking.zip`
+and `kingofb.zip` handy, then build the `.rom` image:
+
+```
+python pack_rom.py
+```
+
+It matches the required files by CRC32 and writes `ringking.rom` into
+`Assets/ringking/common/`. Copy the contents of `dist/` to your Pocket SD card.
 
 ## Credits
 
-- **Original arcade game:** Woodplace / Data East (1985)
-- **MiSTer port:** <!-- TODO -->
-- **FPGA arcade core:** <!-- TODO -->
-- **Analogue Pocket port:** HarpMudd
+- **Original arcade game:** Woodplace Inc. / Data East USA (1985)
+- **MAME** — indispensable hardware reference (`dataeast/kingobox.cpp`)
+- **Z80 CPU core:** `T80`
+- **SDRAM controller:** agg23
+- **FPGA core & Analogue Pocket build:** HarpMudd
 
 ## About / Support
 

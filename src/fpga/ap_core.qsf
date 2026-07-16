@@ -46,6 +46,11 @@ set_global_assignment -name LAST_QUARTUS_VERSION "25.1std.0 Lite Edition"
 set_global_assignment -name PROJECT_OUTPUT_DIRECTORY output_files
 set_global_assignment -name PRE_FLOW_SCRIPT_FILE "quartus_sh:apf/build_id_gen.tcl"
 set_global_assignment -name SMART_RECOMPILE ON
+# Placement seed. Moving the sprite gfx (gfx2+gfx3, 144K) to SDRAM freed a lot of
+# BRAM, which shifted placement and left a marginal Fast-corner HOLD miss
+# (-0.006 ns) on sprite_cpu|DO -> sp_work data-in -- a latent short path, not an
+# SDRAM issue. A different seed gives the fitter another placement to close it.
+set_global_assignment -name SEED 3
 
 # Pin & Location Assignments
 # ==========================
@@ -746,6 +751,8 @@ set_global_assignment -name SDC_FILE core/core_constraints.sdc
 set_global_assignment -name QIP_FILE core/mf_pllbase.qip
 set_global_assignment -name SIP_FILE core/mf_pllbase.sip
 # Ring King RTL -- quad Z80 (T80) + game logic (Stage 1; AY+DAC = Stage 3).
+set_global_assignment -name VERILOG_MACRO "USE_SDRAM=1"
+set_global_assignment -name SYSTEMVERILOG_FILE core/mem/sdram.sv
 set_global_assignment -name QIP_FILE rtl/T80/T80.qip
 set_global_assignment -name VERILOG_FILE rtl/ringking_game.v
 set_instance_assignment -name WEAK_PULL_UP_RESISTOR ON -to bridge_1wire

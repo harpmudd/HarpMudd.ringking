@@ -41,14 +41,33 @@ module ringking_game (
 
     input  wire [31:0] cont1_key,   // Pocket P1
     input  wire [31:0] cont2_key,   // Pocket P2
+
+    // sprite gfx (gfx2 bank0 + gfx3 bank1) live in SDRAM, fetched via core_game.vh.
+    // Same clk_sys domain => plain req/ready handshake, no CDC.
+    // word addr = {bank, A[14:0], hw}: hw0 = {plane1,plane0}, hw1 = {x,plane2}.
+    output wire [16:0] sgfx_addr,
+    output wire        sgfx_req,
+    input  wire [15:0] sgfx_q,
+    input  wire        sgfx_ready,
+
     output wire [15:0] audio
 );
-    assign audio = 16'd0;           // Stage 3 = AY-3-8910 + DAC
-
-    // ===== Clock enable: all four Z80s @ 4 MHz = clk_sys/12 ===================
+    // ===== Clock enables (single clk_sys domain) =============================
+    // all four Z80s @ 4 MHz = clk_sys/12 ; AY-3-8910 @ 1.5 MHz = clk_sys/32.
     reg [3:0] div12 = 4'd0;
     always @(posedge clk_sys) div12 <= (div12 == 4'd11) ? 4'd0 : div12 + 4'd1;
     wire cen_cpu = (div12 == 4'd0);
+    reg [4:0] div32 = 5'd0;
+    always @(posedge clk_sys) div32 <= div32 + 5'd1;
+    wire cen_ay = (div32 == 5'd0);
+
+    // ===== Audio mix: AY (route 0.25) + 8-bit R2R DAC (route 0.125) = 2:1 =====
+    // ay_snd 0..765 (3 ch x 255), dac_val 0..255. Scale to a comfortable level:
+    // 765*21 + 255*32 = 24225 max, inside the 0x7FFF unipolar headroom. The chip
+    // output is unipolar, so ^0x8000 centres it for the SIGNED_INPUT=0 i2s
+    // (silence = 0x8000; the DC offset is removed by the AC-coupled output).
+    wire [15:0] snd_mix = ({6'd0, ay_snd} * 16'd21) + ({8'd0, dac_val} * 16'd32);
+    assign audio = snd_mix ^ 16'h8000;
 
     wire resetn = rom_loaded & ~reset;
 
@@ -285,27 +304,10 @@ module ringking_game (
     reg [7:0] sp0_q, sp1_q;  reg [7:0] spal_addr;
     always @(posedge clk_vid) begin sp0_q <= prom0[spal_addr]; sp1_q <= prom1[spal_addr]; end
 
-    // gfx2 = sprites bank0 (rk_spritelayout, 3bpp, 3 planes x 32K). gfx3 = sprites
-    // bank1 (rk_tilelayout, 3bpp, 3 planes x 16K). Both decode: byte = code*32 + y +
-    // (x>=8?16:0), bit = x&7; pix3 = {plane0(MSB),plane1,plane2(LSB)}[bit]. 3 planes
-    // per bank read in PARALLEL. Image: gfx2 cx04/cx02/cx06 @0x20000/0x28000/0x30000;
-    // gfx3 cx03/cx01/cx05 @0x38000/0x3C000/0x40000.
-    reg [7:0] g2p0 [0:32767]; reg [7:0] g2p1 [0:32767]; reg [7:0] g2p2 [0:32767];
-    reg [7:0] g3p0 [0:16383]; reg [7:0] g3p1 [0:16383]; reg [7:0] g3p2 [0:16383];
-    reg [7:0] g2p0_q, g2p1_q, g2p2_q, g3p0_q, g3p1_q, g3p2_q;
-    reg [14:0] spg_addr;      // gfx2 needs 15 bits; gfx3 uses low 14
-    always @(posedge clk_sys) begin
-        if (ld & (dn_addr>=19'h20000)&(dn_addr<19'h28000)) g2p0[dn_addr[14:0]]<=dn_data;
-        if (ld & (dn_addr>=19'h28000)&(dn_addr<19'h30000)) g2p1[dn_addr[14:0]]<=dn_data;
-        if (ld & (dn_addr>=19'h30000)&(dn_addr<19'h38000)) g2p2[dn_addr[14:0]]<=dn_data;
-        if (ld & (dn_addr>=19'h38000)&(dn_addr<19'h3C000)) g3p0[dn_addr[13:0]]<=dn_data;
-        if (ld & (dn_addr>=19'h3C000)&(dn_addr<19'h40000)) g3p1[dn_addr[13:0]]<=dn_data;
-        if (ld & (dn_addr>=19'h40000)&(dn_addr<19'h44000)) g3p2[dn_addr[13:0]]<=dn_data;
-    end
-    always @(posedge clk_sys) begin
-        g2p0_q<=g2p0[spg_addr]; g2p1_q<=g2p1[spg_addr]; g2p2_q<=g2p2[spg_addr];
-        g3p0_q<=g3p0[spg_addr[13:0]]; g3p1_q<=g3p1[spg_addr[13:0]]; g3p2_q<=g3p2[spg_addr[13:0]];
-    end
+    // gfx2 (sprites bank0) + gfx3 (bank1) now live in SDRAM -- they were 144K of
+    // BRAM (96 M10K + 48) which the sound ROM needs back. The engine fetches them
+    // over the sgfx_* port. Decode is unchanged: byte = code*32 + y + (x>=8?16:0),
+    // bit = x&7, pix3 = {plane0(MSB),plane1,plane2(LSB)}.
 
     // spriteram engine read (spr_eaddr/spr_eq) is port B of the sprram tdp_ram
     // (declared in the SPRITE Z80 section). Engine drives spr_eaddr here.
@@ -412,8 +414,36 @@ module ringking_game (
         if (sd_wr & sd_sel_work) sd_work[sd_addr[9:0]] <= sd_dout;  sd_work_q <= sd_work[sd_addr[9:0]];
     end
     always @(posedge clk_sys) snd_rom_q <= snd_rom[sd_addr[15:0]];
+
+    // ---- sound IO (ringking_sound_io_map, global_mask 0xFF) -----------------
+    //   00 w = DAC ; 02 w = AY DATA ; 03 w = AY ADDRESS ; 02 r = AY data
+    // MAME: map(0x02,0x03).w(data_address_w) -> ay8910_write_ym(~offset & 1), and
+    // write_ym(1)=DATA / write_ym(0)=ADDRESS. So offset0 (io 0x02) = DATA and
+    // offset1 (io 0x03) = ADDRESS ("BC1 tied to A0 puts data on 0, address on 1").
+    // The read at 0x02 being data_r corroborates that 0x02 is the data port.
+    // (Swapping these writes register numbers into the data port = pure noise.)
+    // An IO cycle is IORQ low with M1 HIGH (M1 low + IORQ = interrupt ack).
+    wire sd_io    = ~sd_iorq_n & sd_m1_n;
+    wire sd_io_wr = cen_cpu & sd_io & ~sd_wr_n;
+    wire sd_io_rd = sd_io & ~sd_rd_n;
+    wire ay_data_we = sd_io_wr & (sd_addr[7:0] == 8'h02);
+    wire ay_addr_we = sd_io_wr & (sd_addr[7:0] == 8'h03);
+    wire dac_we     = sd_io_wr & (sd_addr[7:0] == 8'h00);
+
+    reg [7:0] dac_val = 8'd0;                      // 8-bit R2R DAC latch
+    always @(posedge clk_sys) if (dac_we) dac_val <= sd_dout;
+
+    wire [7:0] ay_dout;  wire [9:0] ay_snd;
+    ay8910 u_ay (
+        .clk (clk_sys), .cen (cen_ay), .rst (~resetn),
+        .din (sd_dout), .addr_we (ay_addr_we), .data_we (ay_data_we),
+        .dout (ay_dout), .port_a (soundlatch),     // reg 14 = sound latch
+        .snd (ay_snd)
+    );
+
     always @(*) begin
-        if      (sd_sel_rom)  sd_din = snd_rom_q;
+        if      (sd_io_rd)    sd_din = ay_dout;    // IO read (AY data @ 0x02)
+        else if (sd_sel_rom)  sd_din = snd_rom_q;
         else if (sd_sel_work) sd_din = sd_work_q;
         else if (sd_intack)   sd_din = 8'hFF;
         else                  sd_din = 8'hFF;
@@ -588,9 +618,16 @@ module ringking_game (
     reg [8:0] spr_disp_q;                    // display read (clk_vid)
     always @(posedge clk_vid) spr_disp_q <= sprbuf[{~wsel, hcnt[7:0]}];
 
-    // engine FSM
+    // engine FSM. Sprite gfx comes from SDRAM: per on-line sprite we issue FOUR
+    // single-word reads -- {bank,A_L,0}={p1,p0} left, {bank,A_L,1}=p2 left, then the
+    // same two for A_R = A_L+16 (right half). A = code*32 + yr.
     localparam SE_IDLE=4'd0, SE_CLR=4'd1, SE_RD=4'd2, SE_CHK=4'd3,
-               SE_GL=4'd4, SE_GLW=4'd5, SE_GR=4'd6, SE_GRW=4'd7, SE_WR=4'd8;
+               SE_G0=4'd4, SE_G1=4'd5, SE_G2=4'd6, SE_G3=4'd7, SE_WR=4'd8;
+    reg [16:0] sg_a;                       // current SDRAM word address
+    reg        sg_rq = 1'b0;               // held high until sgfx_ready
+    reg [14:0] a_left;                     // A for the left half
+    assign sgfx_addr = sg_a;
+    assign sgfx_req  = sg_rq;
     reg [3:0]  se = SE_IDLE;
     reg [8:0]  clr_i;
     reg [7:0]  spr_i;
@@ -635,26 +672,33 @@ module ringking_game (
             SE_CHK: begin
                 bank_l  <= s_attr[2];
                 color_l <= {palette_bank, s_attr[6:4]};
-                if (on_line) begin               // left-half byte = code*32 + yr
-                    spg_addr <= {s_attr[1:0], s_code, 5'd0} + {11'd0, yr};
-                    se <= SE_GL;
+                if (on_line) begin               // A_L = code*32 + yr
+                    a_left <= {s_attr[1:0], s_code, 5'd0} + {11'd0, yr};
+                    sg_a   <= {s_attr[2], ({s_attr[1:0], s_code, 5'd0} + {11'd0, yr}), 1'b0};
+                    sg_rq  <= 1'b1;              // request {bank, A_L, 0}
+                    se <= SE_G0;
                 end else if (spr_i == 8'd255) se <= SE_IDLE;
                 else begin spr_i <= spr_i + 8'd1; rd_k <= 3'd0; se <= SE_RD; end
             end
-            SE_GL:  se <= SE_GLW;                 // gfx addr presented; planes valid next
-            SE_GLW: begin                         // left planes valid -> latch
-                L0 <= bank_l ? g3p0_q : g2p0_q;
-                L1 <= bank_l ? g3p1_q : g2p1_q;
-                L2 <= bank_l ? g3p2_q : g2p2_q;
-                spg_addr <= spg_addr + 15'd16;    // right-half byte
-                se <= SE_GR;
+            SE_G0: if (sgfx_ready) begin          // {plane1, plane0} left
+                L0 <= sgfx_q[7:0];  L1 <= sgfx_q[15:8];
+                sg_a <= {bank_l, a_left, 1'b1};   // {bank, A_L, 1} -> plane2
+                se <= SE_G1;                      // sg_rq stays high
             end
-            SE_GR:  se <= SE_GRW;
-            SE_GRW: begin
-                R0 <= bank_l ? g3p0_q : g2p0_q;
-                R1 <= bank_l ? g3p1_q : g2p1_q;
-                R2 <= bank_l ? g3p2_q : g2p2_q;
-                wcol <= 4'd0;  se <= SE_WR;
+            SE_G1: if (sgfx_ready) begin          // plane2 left
+                L2 <= sgfx_q[7:0];
+                sg_a <= {bank_l, (a_left + 15'd16), 1'b0};   // right half
+                se <= SE_G2;
+            end
+            SE_G2: if (sgfx_ready) begin          // {plane1, plane0} right
+                R0 <= sgfx_q[7:0];  R1 <= sgfx_q[15:8];
+                sg_a <= {bank_l, (a_left + 15'd16), 1'b1};
+                se <= SE_G3;
+            end
+            SE_G3: if (sgfx_ready) begin          // plane2 right
+                R2 <= sgfx_q[7:0];
+                sg_rq <= 1'b0;                    // done fetching this sprite
+                wcol  <= 4'd0;  se <= SE_WR;
             end
             SE_WR: begin                          // write 16 pixels (opaque only)
                 sb_waddr <= {wsel, (s_sx + {4'd0, wcol})};
@@ -715,6 +759,119 @@ module ringking_game (
     // keep misc regs "used" (avoid prune warnings)
     wire _unused = &{1'b0, flip_screen, m_m1_n, sd_dout, 1'b0};
 
+endmodule
+
+// =============================================================================
+// ay8910 -- AY-3-8910 PSG (Ring King: 1.5 MHz, port A = soundlatch).
+// 3 square tone channels + noise + envelope, mixed to one unipolar output.
+//   tone f = cen/(16*period)  => counters step at cen/8.
+//   reg7 mixer: bits0-2 = tone A/B/C DISABLE, bits3-5 = noise A/B/C DISABLE.
+//   reg8/9/10 amplitude: [3:0] level, [4] = use envelope.
+//   reg14 (port A) reads the sound latch.
+// Envelope shape follows the datasheet rule shp={CONT,ATT,ALT,HOLD} -- CONT=0 must
+// fall SILENT, HOLD stops at the ATT^ALT end, ALT reverses, else repeat. (Getting
+// this wrong leaves channels stuck at full volume forever = permanent noise.)
+// Amplitude 0 must map to level 0 (silent), not level 1.
+// =============================================================================
+`default_nettype none
+module ay8910 (
+    input  wire       clk,
+    input  wire       cen,          // 1.5 MHz chip clock enable
+    input  wire       rst,
+    input  wire [7:0] din,
+    input  wire       addr_we,      // latch register address
+    input  wire       data_we,      // write register data
+    output wire [7:0] dout,         // read register data
+    input  wire [7:0] port_a,       // reg 14 = sound latch
+    output wire [9:0] snd           // 3 channels summed (0..765)
+);
+    reg [3:0] raddr;
+    reg [7:0] regs [0:15] /* synthesis ramstyle = "logic" */;
+    integer i;
+    always @(posedge clk) begin
+        if (rst) begin for (i=0;i<16;i=i+1) regs[i] <= 8'd0; raddr <= 4'd0; end
+        else begin
+            if (addr_we) raddr <= din[3:0];
+            if (data_we) regs[raddr] <= din;
+        end
+    end
+    assign dout = (raddr == 4'd14) ? port_a : regs[raddr];
+
+    // counters tick at cen/8 (tone period units are cen/16 -> toggle at 2x period)
+    reg [2:0] pdiv;
+    wire step = cen & (pdiv == 3'd7);
+    always @(posedge clk) if (cen) pdiv <= pdiv + 3'd1;
+
+    wire [11:0] perA = {regs[1][3:0], regs[0]};
+    wire [11:0] perB = {regs[3][3:0], regs[2]};
+    wire [11:0] perC = {regs[5][3:0], regs[4]};
+    wire [4:0]  perN = regs[6][4:0];
+    wire [7:0]  enab = regs[7];
+    wire [15:0] perE = {regs[12], regs[11]};
+    wire [3:0]  shp  = regs[13][3:0];
+
+    reg [11:0] cntA, cntB, cntC;  reg toneA, toneB, toneC;
+    always @(posedge clk) if (step) begin
+        if (cntA >= perA) begin cntA<=12'd0; toneA<=~toneA; end else cntA<=cntA+12'd1;
+        if (cntB >= perB) begin cntB<=12'd0; toneB<=~toneB; end else cntB<=cntB+12'd1;
+        if (cntC >= perC) begin cntC<=12'd0; toneC<=~toneC; end else cntC<=cntC+12'd1;
+    end
+
+    // noise: 5-bit period counter + 17-bit LFSR (taps 0^3)
+    reg [4:0] cntNo;  reg [16:0] lfsr = 17'h1FFFF;  reg noise_ff;
+    always @(posedge clk) if (step) begin
+        if (cntNo >= perN) begin
+            cntNo<=5'd0; noise_ff<=~noise_ff;
+            if (noise_ff) lfsr <= {lfsr[0]^lfsr[3], lfsr[16:1]};
+        end else cntNo<=cntNo+5'd1;
+    end
+    wire noise = lfsr[0];
+
+    // envelope: 16-bit period, 5-bit level, datasheet shape rule
+    reg [15:0] cntE;  reg [4:0] envlvl;  reg env_hold, env_att;
+    always @(posedge clk) begin
+        if (data_we && (raddr == 4'd13)) begin        // writing shape restarts it
+            cntE<=16'd0; env_hold<=1'b0; env_att<=din[2]; envlvl<=din[2]?5'd0:5'd31;
+        end else if (step) begin
+            if (cntE >= perE) begin
+                cntE <= 16'd0;
+                if (~env_hold) begin
+                    if (env_att ? (envlvl==5'd31) : (envlvl==5'd0)) begin
+                        if (~shp[3])      begin envlvl<=5'd0; env_hold<=1'b1; end   // CONT=0 -> silent
+                        else if (shp[0])  begin envlvl<=(env_att^shp[1])?5'd31:5'd0; env_hold<=1'b1; end
+                        else if (shp[1])  begin env_att<=~env_att; envlvl<=env_att?5'd30:5'd1; end
+                        else                    envlvl<= env_att?5'd0:5'd31;        // repeat ramp
+                    end else envlvl <= env_att ? (envlvl+5'd1) : (envlvl-5'd1);
+                end
+            end else cntE <= cntE + 16'd1;
+        end
+    end
+
+    // level select: amplitude 0 -> silent; else vol*2|1 into the 32-step table
+    function [4:0] amp2lvl; input [3:0] a; begin amp2lvl = (a==4'd0) ? 5'd0 : {a,1'b1}; end endfunction
+    wire [4:0] lvlA = regs[8][4]  ? envlvl : amp2lvl(regs[8][3:0]);
+    wire [4:0] lvlB = regs[9][4]  ? envlvl : amp2lvl(regs[9][3:0]);
+    wire [4:0] lvlC = regs[10][4] ? envlvl : amp2lvl(regs[10][3:0]);
+
+    wire chA = (toneA | enab[0]) & (noise | enab[3]);
+    wire chB = (toneB | enab[1]) & (noise | enab[4]);
+    wire chC = (toneC | enab[2]) & (noise | enab[5]);
+
+    // log DAC: ymfm ssg.cpp s_amplitudes (exact YM2149 curve) scaled to 0..255/ch
+    function [7:0] dac; input [4:0] l; begin
+        case (l)
+          5'd0:dac=0;   5'd1:dac=1;   5'd2:dac=1;   5'd3:dac=2;
+          5'd4:dac=3;   5'd5:dac=3;   5'd6:dac=4;   5'd7:dac=5;
+          5'd8:dac=6;   5'd9:dac=7;   5'd10:dac=8;  5'd11:dac=9;
+          5'd12:dac=11; 5'd13:dac=13; 5'd14:dac=15; 5'd15:dac=17;
+          5'd16:dac=21; 5'd17:dac=25; 5'd18:dac=29; 5'd19:dac=33;
+          5'd20:dac=40; 5'd21:dac=48; 5'd22:dac=56; 5'd23:dac=64;
+          5'd24:dac=78; 5'd25:dac=94; 5'd26:dac=109;5'd27:dac=127;
+          5'd28:dac=155;5'd29:dac=186;5'd30:dac=220;default:dac=255;
+        endcase
+    end endfunction
+    assign snd = {2'b0, chA ? dac(lvlA) : 8'd0} + {2'b0, chB ? dac(lvlB) : 8'd0}
+               + {2'b0, chC ? dac(lvlC) : 8'd0};
 endmodule
 
 // =============================================================================
