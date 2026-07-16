@@ -61,16 +61,25 @@ from the hardware description:
 
 ## Games
 
-Two sets run on this one core — pick the game from the Pocket menu:
+Three games run on this one core — pick the game from the Pocket menu:
 
 | Game | Romset |
 |---|---|
 | **Ring King (US set 1)** | `ringking.zip` + `kingofb.zip` |
 | **Ring King (US set 2)** | `ringking2.zip` + `kingofb.zip` |
+| **King of Boxer (World)** | `kingofb.zip` |
 
-Both are the same board, so both run on the same bitstream; they differ only in
-the main and video CPU program ROMs. (`ringking`/`ringking2` are clones of
-`kingofb` and take a file from the parent, hence the second zip.)
+The two Ring King sets are the same board and differ only in the main and video
+CPU program ROMs. (They're clones of `kingofb` and take a file from the parent,
+hence the second zip.)
+
+*King of Boxer* is the same game on **different hardware** — the original
+Woodplace release, which Data East later relicensed as *Ring King*. The boards
+shuffle their memory maps, sound chip ports, sprite format and input polarity,
+so the core reads a variant byte at load time and switches all of that at
+runtime. The artwork is pixel-identical between the two; only the ROM packing
+differs, so it's unpacked into a common layout when the ROM image is built
+rather than costing a second decoder in the FPGA.
 
 ## ROMs
 

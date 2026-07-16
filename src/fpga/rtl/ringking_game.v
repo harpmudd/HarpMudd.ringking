@@ -211,22 +211,34 @@ module ringking_game (
     wire [1:0] palette_bank = f800_reg[4:3];   // Stage 2
     wire flip_screen = f800_reg[7];            // Stage 2
 
-    // ---- inputs. E000 DSW1 E001 DSW2 E002 P1 E003 P2 E004 SYS E005 EXTRA.
+    // ---- inputs. RK: E000 DSW1 E001 DSW2 E002 P1 E003 P2 E004 SYS E005 EXTRA.
+    //               KoB: same order at FC00-FC05.
+    // The bit ASSIGNMENTS are identical on both boards, but the POLARITY is not:
+    // every ringking P1/P2/SYSTEM/EXTRA bit is IP_ACTIVE_LOW (idle = 1) while every
+    // kingofb one is IP_ACTIVE_HIGH (idle = 0). So we build each port active-high
+    // ("pressed = 1") and invert the whole thing for Ring King only.
     // MAME P1 bits: 0 up, 1 down, 2 RIGHT, 3 LEFT, 4 button1, 5 button2.
-    // (cont keys: 0 up,1 down,2 left,3 right,4 A,5 B.)
-    wire [7:0] p1 = ~{2'b00, cont1_key[4], cont1_key[5], cont1_key[2],
-                      cont1_key[3], cont1_key[1], cont1_key[0]};   // bit2=right, bit3=left
-    wire [7:0] p2 = ~{2'b00, cont2_key[4], cont2_key[5], cont2_key[2],
-                      cont2_key[3], cont2_key[1], cont2_key[0]};
-    wire [7:0] sys = ~{4'b0000, cont2_key[15], cont1_key[15], cont2_key[14], cont1_key[14]};
-    // MAME factory DIP defaults. The two boards have DIFFERENT INPUT_PORTS:
-    //   kingofb DSW1 bit7 = PORT_SERVICE, ACTIVE **HIGH** -> it must read 0 or the
-    //   game boots straight into its test grid and sits there. (Ring King's service
-    //   bit is active-LOW, which is the only reason the old 0xFF placeholder worked.)
-    //   EXTRA bit0 = BUTTON3, active high -> 0 = not pressed.
-    wire [7:0] DSW1  = kob ? 8'h21 : 8'h97;
+    // (cont keys: 0 up,1 down,2 left,3 right,4 A,5 B,6 X,14 select,15 start.)
+    wire [7:0] p1_raw = {2'b00, cont1_key[4], cont1_key[5], cont1_key[2],
+                         cont1_key[3], cont1_key[1], cont1_key[0]};  // bit2=right, bit3=left
+    wire [7:0] p2_raw = {2'b00, cont2_key[4], cont2_key[5], cont2_key[2],
+                         cont2_key[3], cont2_key[1], cont2_key[0]};
+    wire [7:0] sys_raw   = {4'b0000, cont2_key[15], cont1_key[15],
+                            cont2_key[14], cont1_key[14]};
+    wire [7:0] extra_raw = {6'b000000, cont2_key[6], cont1_key[6]};  // BUTTON3 (P1 / cocktail)
+    wire [7:0] p1    = kob ? p1_raw    : ~p1_raw;
+    wire [7:0] p2    = kob ? p2_raw    : ~p2_raw;
+    wire [7:0] sys   = kob ? sys_raw   : ~sys_raw;
+    // Ring King's EXTRA is active-LOW and bit3 is COIN2: idle MUST be 1s, or COIN2
+    // reads as jammed on and the game stops responding. KoB's is active-high (idle 0).
+    wire [7:0] EXTRA = kob ? extra_raw : ~extra_raw;
+    // MAME factory DIP defaults -- raw port values, so polarity does not apply here.
+    //   kingofb DSW1 bit7 = PORT_SERVICE ACTIVE **HIGH** -> must read 0, else the game
+    //   boots straight into its test grid. Ring King's service bit is active-LOW,
+    //   which is the only reason the old 0xFF placeholder ever worked there.
+    //   Ring King DSW1 bit6 is a PORT_BIT UNUSED, active-low -> idle 1 (hence 0xD7).
+    wire [7:0] DSW1  = kob ? 8'h21 : 8'hD7;
     wire [7:0] DSW2  = kob ? 8'h00 : 8'hDF;
-    wire [7:0] EXTRA = 8'h00;
     reg [7:0] m_io_q;
     always @(*) case (m_addr[2:0])
         3'd0: m_io_q = DSW1; 3'd1: m_io_q = DSW2; 3'd2: m_io_q = p1;
@@ -308,6 +320,12 @@ module ringking_game (
     always @(posedge clk_vid) disp_fc_q <= fgcram[disp_fg_addr];   // display port (clk_vid)
     // bg videoram(code)/colorram(attr) = DUAL-CLOCK: port A video cpu R/W, port B
     // display read (bg tile pipeline). 256-entry 16x16 map.
+    // KoB bg prefetch buffers (filled by the clk_sys FSM near the end of the file).
+    reg [7:0] bgb_L0[0:1], bgb_L1[0:1], bgb_L2[0:1];
+    reg [7:0] bgb_R0[0:1], bgb_R1[0:1], bgb_R2[0:1];
+    reg [4:0] bgb_clr[0:1];
+    wire      bg_sg_rdy, spr_sg_rdy;
+
     reg [7:0] bgvram [0:255];   reg [7:0] bgv_q;  reg [7:0] disp_bv_q;
     reg [7:0] bgcram [0:255];   reg [7:0] bgc_q;  reg [7:0] disp_bc_q;
     reg [7:0] disp_bg_addr;
@@ -612,7 +630,11 @@ module ringking_game (
     //   (+1 phase reg per registered-BRAM read). scroll_y sign + PIX_DELAY = HW knobs.
     // =========================================================================
     wire [9:0] bg_v = vcnt + VOFF - {2'b0, scroll_y};   // MAME set_scrolly(-scroll_y)
+    // KoB lookahead row: during the last tile of a line the lookahead wraps to col 0,
+    // which the display uses on the NEXT line -> fetch it with the next line's row.
+    wire [9:0] bg_v_la = (hcnt[7:4] == 4'd15) ? (bg_v + 10'd1) : bg_v;
     reg [3:0] bx_s0, by_s0, bx_s1, by_s1, bcol_s0, bcol_s1;
+    reg [3:0] bx_s2, bx_s3, bcol_s2, bcol_s3;    // KoB: full x + tile parity out to s4
     reg [1:0] bxl_s2, bxl_s3;
     reg [4:0] bclr_s2, bclr_s3, bclr_s4;
     reg [2:0] pix3_s4;
@@ -622,9 +644,19 @@ module ringking_game (
         2'd0: xb_c = 14'd16;   2'd1: xb_c = 14'd8192;
         2'd2: xb_c = 14'd0;    default: xb_c = 14'd8208;
     endcase
+    // KoB bg pixel: bit-select out of the tile's 6 prefetched plane bytes. Same
+    // decode as a sprite (bit = x&7, half = x[3], pix3 = {p0,p1,p2}) because KoB's
+    // bg IS the sprite gfx. Buffer slot = the tile's parity; the clk_sys prefetch
+    // only ever fills the slot clk_vid is not reading.
+    wire       kob_par  = bcol_s3[0];
+    wire [2:0] kb       = bx_s3[2:0];
+    wire [2:0] kob_pix3 = bx_s3[3] ? {bgb_R0[kob_par][kb], bgb_R1[kob_par][kb], bgb_R2[kob_par][kb]}
+                                   : {bgb_L0[kob_par][kb], bgb_L1[kob_par][kb], bgb_L2[kob_par][kb]};
     always @(posedge clk_vid) begin
-        // s0: bg tile index (COLS_FLIP_Y 16x16) + phase
-        disp_bg_addr <= {hcnt[7:4], ~bg_v[7:4]};
+        // s0: bg tile index (COLS_FLIP_Y 16x16) + phase.
+        //     KoB addresses ONE TILE AHEAD so the SDRAM prefetch for tile T runs
+        //     while the display is still on T-1.
+        disp_bg_addr <= kob ? {(hcnt[7:4] + 4'd1), ~bg_v_la[7:4]} : {hcnt[7:4], ~bg_v[7:4]};
         bx_s0 <= hcnt[3:0];  by_s0 <= bg_v[3:0];  bcol_s0 <= hcnt[7:4];
         // s1: align phase to disp_bv_q / disp_bc_q
         bx_s1 <= bx_s0;  by_s1 <= by_s0;  bcol_s1 <= bcol_s0;
@@ -632,12 +664,16 @@ module ringking_game (
         gfx4_addr <= ((bcol_s1 != 4'd0) ? {disp_bv_q, 5'd0} : 14'd0)   // code * 32
                      + xb_c + {10'd0, (4'd15 - by_s1)};                // xb + (15-y)
         bclr_s2 <= {palette_bank, disp_bc_q[6:4]};                     // color
-        bxl_s2  <= bx_s1[1:0];
+        bxl_s2  <= bx_s1[1:0];   bx_s2 <= bx_s1;   bcol_s2 <= bcol_s1;
         // s3: align to g4lo_q / g4hi_q
         bclr_s3 <= bclr_s2;  bxl_s3 <= bxl_s2;
-        // s4: gfx4 bytes valid -> 3bpp pixel; carry color
-        pix3_s4 <= {g4hi_q[bxl_s3], g4lo_q[{1'b1,bxl_s3}], g4lo_q[{1'b0,bxl_s3}]};
-        bclr_s4 <= bclr_s3;
+        bx_s3   <= bx_s2;    bcol_s3 <= bcol_s2;
+        // s4: gfx bytes valid -> 3bpp pixel; carry color. Ring King reads gfx4 per
+        //     pixel from BRAM; KoB has no gfx4 and takes the tile's bytes + colour
+        //     from the SDRAM prefetch buffer instead.
+        pix3_s4 <= kob ? kob_pix3
+                       : {g4hi_q[bxl_s3], g4lo_q[{1'b1,bxl_s3}], g4lo_q[{1'b0,bxl_s3}]};
+        bclr_s4 <= kob ? bgb_clr[kob_par] : bclr_s3;
         // s5: present pen -> PROM
         pal_addr <= {bclr_s4, pix3_s4};
         // s6: PROM valid -> resnet RGB
@@ -678,10 +714,10 @@ module ringking_game (
     localparam SE_IDLE=4'd0, SE_CLR=4'd1, SE_RD=4'd2, SE_CHK=4'd3,
                SE_G0=4'd4, SE_G1=4'd5, SE_G2=4'd6, SE_G3=4'd7, SE_WR=4'd8;
     reg [16:0] sg_a;                       // current SDRAM word address
-    reg        sg_rq = 1'b0;               // held high until sgfx_ready
+    reg        sg_rq = 1'b0;               // held high until spr_sg_rdy
     reg [14:0] a_left;                     // A for the left half
-    assign sgfx_addr = sg_a;
-    assign sgfx_req  = sg_rq;
+    // (sg_a/sg_rq now go through the SDRAM arbiter at the end of the module --
+    //  the King of Boxer bg prefetch is a second requester on the same port.)
     reg [3:0]  se = SE_IDLE;
     reg [8:0]  clr_i;
     reg [7:0]  spr_i;
@@ -707,6 +743,10 @@ module ringking_game (
     // flipy polarity is INVERTED between the boards: Ring King ~attr[7], KoB attr[7].
     wire [7:0] srow = rline - s_sy;
     wire       on_line = (srow < 8'd16);
+    // Same test one cycle earlier, straight off the RAM output: at rd_k==2 spr_eq IS
+    // byte0 (sy), the value s_sy is about to latch. Used only by the SE_RD early-out.
+    wire [7:0] srow_e   = rline - spr_eq;
+    wire       on_line_e = (srow_e < 8'd16);
     wire       spr_flipy = kob ? s_attr[7] : ~s_attr[7];
     wire [3:0] yr = spr_flipy ? (4'd15 - srow[3:0]) : srow[3:0];
     // combinational sprite pixel from latched plane bytes (bit = col&7, half = col[3])
@@ -738,7 +778,19 @@ module ringking_game (
                     3'd4: if (kob) s_code <= spr_eq; else s_sx   <= spr_eq;
                     3'd5: if (kob) s_attr <= spr_eq; else s_code <= spr_eq;
                 endcase
-                if (rd_k == 3'd5) se <= SE_CHK; else rd_k <= rd_k + 3'd1;
+                // EARLY-OUT. sy is byte0, so it is already on spr_eq at rd_k==2, and it
+                // ALONE decides whether this slot is on the line -- the other 3 fields
+                // only matter if it is. Bailing here costs an off-line slot 3 clk
+                // instead of 7 (4 reads + SE_CHK). All 256 slots are scanned every line
+                // (MAME does the same), and the vast majority are off-line, so this
+                // frees ~1024 of the 3072 clk line: the headroom the KoB bg prefetch
+                // was taking out of the sprite budget. Ring King gains it too.
+                if ((rd_k == 3'd2) && !on_line_e) begin
+                    if (spr_i == 8'd255) se <= SE_IDLE;
+                    else begin spr_i <= spr_i + 8'd1; rd_k <= 3'd0; end
+                end
+                else if (rd_k == 3'd5) se <= SE_CHK;
+                else rd_k <= rd_k + 3'd1;
             end
             SE_CHK: begin
                 bank_l  <= s_attr[2];
@@ -751,22 +803,22 @@ module ringking_game (
                 end else if (spr_i == 8'd255) se <= SE_IDLE;
                 else begin spr_i <= spr_i + 8'd1; rd_k <= 3'd0; se <= SE_RD; end
             end
-            SE_G0: if (sgfx_ready) begin          // {plane1, plane0} left
+            SE_G0: if (spr_sg_rdy) begin          // {plane1, plane0} left
                 L0 <= sgfx_q[7:0];  L1 <= sgfx_q[15:8];
                 sg_a <= {bank_l, a_left, 1'b1};   // {bank, A_L, 1} -> plane2
                 se <= SE_G1;                      // sg_rq stays high
             end
-            SE_G1: if (sgfx_ready) begin          // plane2 left
+            SE_G1: if (spr_sg_rdy) begin          // plane2 left
                 L2 <= sgfx_q[7:0];
                 sg_a <= {bank_l, (a_left + 15'd16), 1'b0};   // right half
                 se <= SE_G2;
             end
-            SE_G2: if (sgfx_ready) begin          // {plane1, plane0} right
+            SE_G2: if (spr_sg_rdy) begin          // {plane1, plane0} right
                 R0 <= sgfx_q[7:0];  R1 <= sgfx_q[15:8];
                 sg_a <= {bank_l, (a_left + 15'd16), 1'b1};
                 se <= SE_G3;
             end
-            SE_G3: if (sgfx_ready) begin          // plane2 right
+            SE_G3: if (spr_sg_rdy) begin          // plane2 right
                 R2 <= sgfx_q[7:0];
                 sg_rq <= 1'b0;                    // done fetching this sprite
                 wcol  <= 4'd0;  se <= SE_WR;
@@ -826,6 +878,110 @@ module ringking_game (
             vid_r <= bg_r;  vid_g <= bg_g;  vid_b <= bg_b;
         end
     end
+
+    // =========================================================================
+    // King of Boxer BG prefetch (clk_sys).
+    // KoB has no gfx4 -- its bg is drawn out of the SPRITE gfx (gfx2/gfx3), which
+    // lives in SDRAM, so it can't use Ring King's per-pixel gfx4 BRAM read. Instead
+    // we fetch a tile's 6 plane bytes ONCE and bit-select across its 16 px.
+    // Budget: disp_bg_addr looks a tile ahead, so the fetch for tile T runs while
+    // the display is still on T-1 = 16 px = 128 clk_sys, against ~24 settle + ~60
+    // for 4 SDRAM reads. Lands with margin even with the sprite engine busy.
+    // The buffers ping-pong on tile parity, so clk_sys only ever writes the slot
+    // clk_vid is not reading -- no CDC handshake needed. code/attr are quasi-static
+    // for the full 128 clks, so syncing the 1-bit parity is enough to time when to
+    // sample them; a multi-bit sync of disp_bg_addr itself could tear mid-change.
+    // =========================================================================
+    // The lookahead wraps to col 0 during the LAST tile of a line -- and that tile is
+    // displayed on the NEXT line, so it must be fetched with the next line's row.
+    // (bg_v_la is declared up with the bg pipeline, which also uses it for the
+    //  tile index.) The same condition is the "col 0 -> code 0" gate.
+    wire      bg_la_col0 = (hcnt[7:4] == 4'd15);
+    // Only prefetch during ACTIVE display. hcnt runs to 383, so hcnt[7:4] cycles
+    // through cols 0..7 again during hblank; left ungated, those fetches overwrite
+    // the buffers holding the next line's first columns -- which showed up as a
+    // band of the wrong tiles at one screen edge. Gating also cuts the bg's SDRAM
+    // load from 24 tiles/line to 16, giving the sprite engine its budget back.
+    wire      bg_pf_en = (hcnt < 10'd256);
+    reg       h4_s1, h4_s2, h4_s3, lac0_s1, lac0_s2, pfen_s1, pfen_s2;
+    reg [3:0] brow_s1, brow_s2;
+    always @(posedge clk_sys) begin
+        h4_s1   <= hcnt[4];      h4_s2   <= h4_s1;  h4_s3 <= h4_s2;
+        lac0_s1 <= bg_la_col0;   lac0_s2 <= lac0_s1;
+        pfen_s1 <= bg_pf_en;     pfen_s2 <= pfen_s1;
+        brow_s1 <= bg_v_la[3:0]; brow_s2 <= brow_s1;
+    end
+    wire bg_new_tile = h4_s2 ^ h4_s3;      // a new lookahead tile is being addressed
+
+    // code = (col != 0) ? videoram + (attr[1:0] << 8) : 0   [MAME get_bg_tile_info]
+    wire [14:0] bg_code32 = lac0_s2 ? 15'd0 : {disp_bc_q[1:0], disp_bv_q, 5'd0};
+    wire [14:0] bg_A_new  = bg_code32 + {11'd0, brow_s2};   // code*32 + y
+
+    localparam BG_IDLE=3'd0, BG_WAIT=3'd1, BG_G0=3'd2, BG_G1=3'd3, BG_G2=3'd4, BG_G3=3'd5;
+    reg [2:0]  bgs = BG_IDLE;
+    reg [16:0] bg_sg_a;   reg bg_sg_rq = 1'b0;
+    reg [14:0] bg_A;      reg bg_bank;  reg bg_wp;
+    reg [5:0]  bg_dly;
+    always @(posedge clk_sys) begin
+        case (bgs)
+            // Settle delay covers TWO things: disp_bg_addr -> disp_bv_q/disp_bc_q for
+            // the new tile (2 clk_vid), and the display pipeline's ~4 clk_vid lag --
+            // it is still reading the slot we are about to fill for a few px after the
+            // tile boundary. 40 clk_sys = 5 clk_vid clears both, and still leaves
+            // 88 of the 128 clk_sys tile for a ~60 clk fetch.
+            BG_IDLE: if (kob & bg_new_tile & pfen_s2) begin bg_dly <= 6'd40; bgs <= BG_WAIT; end
+            BG_WAIT: if (bg_dly != 6'd0) bg_dly <= bg_dly - 6'd1;
+                     else begin
+                         bg_wp           <= ~h4_s2;              // lookahead tile's parity
+                         bg_bank         <= disp_bc_q[2];        // 0 -> gfx2, 1 -> gfx3
+                         bgb_clr[~h4_s2] <= {palette_bank, disp_bc_q[6:4]};
+                         bg_A            <= bg_A_new;
+                         bg_sg_a         <= {disp_bc_q[2], bg_A_new, 1'b0};
+                         bg_sg_rq        <= 1'b1;
+                         bgs             <= BG_G0;
+                     end
+            BG_G0: if (bg_sg_rdy) begin                          // {plane1, plane0} left
+                       bgb_L0[bg_wp] <= sgfx_q[7:0];  bgb_L1[bg_wp] <= sgfx_q[15:8];
+                       bg_sg_a <= {bg_bank, bg_A, 1'b1};
+                       bgs <= BG_G1;
+                   end
+            BG_G1: if (bg_sg_rdy) begin                          // plane2 left
+                       bgb_L2[bg_wp] <= sgfx_q[7:0];
+                       bg_sg_a <= {bg_bank, (bg_A + 15'd16), 1'b0};
+                       bgs <= BG_G2;
+                   end
+            BG_G2: if (bg_sg_rdy) begin                          // {plane1, plane0} right
+                       bgb_R0[bg_wp] <= sgfx_q[7:0];  bgb_R1[bg_wp] <= sgfx_q[15:8];
+                       bg_sg_a <= {bg_bank, (bg_A + 15'd16), 1'b1};
+                       bgs <= BG_G3;
+                   end
+            BG_G3: if (bg_sg_rdy) begin                          // plane2 right
+                       bgb_R2[bg_wp] <= sgfx_q[7:0];
+                       bg_sg_rq <= 1'b0;
+                       bgs <= BG_IDLE;
+                   end
+            default: bgs <= BG_IDLE;
+        endcase
+    end
+
+    // ---- SDRAM read arbiter. The sprite engine and the KoB bg prefetch share one
+    // read port. The bg wins a tie: it has a hard per-tile deadline, while the
+    // sprite engine is filling a line buffer a whole line ahead. The grant is
+    // COMBINATIONAL when idle, so with the bg quiet (= every Ring King set) both
+    // sgfx_addr and sgfx_req are exactly what the sprite engine drove before --
+    // no added latency on the proven path.
+    reg  sg_own = 1'b0;                     // owner of the in-flight read: 0=spr 1=bg
+    reg  sg_busy = 1'b0;
+    wire sel_bg = sg_busy ? sg_own : bg_sg_rq;
+    always @(posedge clk_sys) begin
+        if (!sg_busy) begin
+            if (bg_sg_rq | sg_rq) begin sg_own <= bg_sg_rq; sg_busy <= 1'b1; end
+        end else if (sgfx_ready) sg_busy <= 1'b0;
+    end
+    assign sgfx_addr = sel_bg ? bg_sg_a : sg_a;
+    assign sgfx_req  = sg_busy ? 1'b1 : (bg_sg_rq | sg_rq);
+    assign bg_sg_rdy  = sgfx_ready &  sg_own;
+    assign spr_sg_rdy = sgfx_ready & ~sg_own;
 
     // keep misc regs "used" (avoid prune warnings)
     wire _unused = &{1'b0, flip_screen, m_m1_n, sd_dout, 1'b0};
