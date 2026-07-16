@@ -64,17 +64,19 @@ Two players use two controllers — the second pad's **Start** is 2P start.
 
 ## Games
 
-Three games run on this one core — pick the game from the Pocket menu:
+All six known sets run on this one core — pick the game from the Pocket menu:
 
 | Game | Romset |
 |---|---|
 | **Ring King (US set 1)** | `ringking.zip` + `kingofb.zip` |
 | **Ring King (US set 2)** | `ringking2.zip` + `kingofb.zip` |
+| **Ring King (US set 3)** | `ringking3.zip` + `kingofb.zip` |
+| **Ring King (US, Woodplace)** | `ringkingw.zip` + `kingofb.zip` |
 | **King of Boxer (World)** | `kingofb.zip` |
+| **King of Boxer (Japan)** | `kingofbj.zip` + `kingofb.zip` |
 
-The two Ring King sets are the same board and differ only in the main and video
-CPU program ROMs. (They're clones of `kingofb` and take a file from the parent,
-hence the second zip.)
+That's every set in MAME's `kingobox` driver. All but `kingofb` are clones that
+take files from the parent, hence the second zip.
 
 *King of Boxer* is the same game on **different hardware** — the original
 Woodplace release, which Data East later relicensed as *Ring King*. The boards
