@@ -27,18 +27,25 @@ THIRD-PARTY COMPONENTS
 This repository bundles third-party HDL, each retaining its own copyright and
 licence notice in its source file headers. Those notices must be preserved.
 
-  src/fpga/rtl/T80/          Z80 CPU core.
+  src/fpga/rtl/T80/          Z80 CPU core. BSD-style licence (see file headers).
                              Copyright (c) 2001-2002 Daniel Wallner
-                             Copyright (c) 2018 Sorgelig
-                             BSD-style licence (see file headers).
+                               <jesus@opencores.org> -- original author
+                             Copyright (c) 2018 Sorgelig -- v350 "T80(c)"
+                             With further work by MikeJ (v300, fpgaarcade.com),
+                             Sean Riddle (v301) and TobiFlex (v303).
 
-  src/fpga/core/mem/         SDRAM controller.
-                             Copyright (c) 2023 Adam Gastineau (agg23)
-                             MIT licence (see file headers).
+  src/fpga/core/mem/         SDRAM controller. MIT licence (see file headers).
+  src/fpga/core/             data_loader, sound_i2s, sync_fifo. MIT.
+                             Copyright (c) 2022-2023 Adam Gastineau (agg23)
 
-  src/fpga/apf/              Analogue Pocket openFPGA framework files.
-                             Copyright (c) Analogue Enterprises Ltd.
-                             Used per the openFPGA framework terms.
+  src/fpga/apf/              Analogue Pocket openFPGA framework (APF).
+                             Copyright (c) Analogue Enterprises Limited.
+                             Used under the Analogue Pocket EULA:
+                             https://www.analogue.link/pocket-eula
+
+The hardware behaviour implemented here was derived from MAME's `kingobox`
+driver by Ernesto Corvi (dataeast/kingobox.cpp, BSD-3-Clause). No MAME source
+code is included in this repository.
 
 No arcade ROM data is included in this repository. ROM images are built by the
 user from romsets they already own.
