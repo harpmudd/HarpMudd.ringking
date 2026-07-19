@@ -123,7 +123,6 @@ Copy the contents of `dist/` to your Pocket SD card.
 - **T80 Z80 CPU core** — Daniel Wallner, with later work by MikeJ,
   Sean Riddle, TobiFlex and Sorgelig
 - **SDRAM controller, data loader, I2S audio** — Adam Gastineau (agg23)
-- **Analogue Pocket openFPGA framework** — Analogue
 - **FPGA core & Pocket build** — HarpMudd
 
 ## License
