@@ -41,7 +41,7 @@ from the hardware description:
   a 3bpp background tilemap with vertical scroll and palette banking, and a
   16×16 3bpp sprite engine (both gfx banks) driven by a double line-buffer.
   All tilemaps use the hardware's column-major, Y-flipped scan order.
-- **Colour** through the original resistor-weighted PROM palette, modelled as
+- **Color** through the original resistor-weighted PROM palette, modelled as
   the real linear resistor-ladder DAC.
 - **Sprite graphics streamed from SDRAM**, with the three bitplanes interleaved
   so a single fetch yields a whole pixel.

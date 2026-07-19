@@ -178,7 +178,7 @@ KINGOFB_PROMS = [(0xc58e5121, "R"), (0x5ab06f25, "G"), (0x1171743f, "B")]
 # ---- the other three sets in the King of Boxer group -------------------------
 # All run the same board as kingofb, so they all take the normalising path and the
 # kob variant byte. They differ only in which ROMs they carry -- and, for the two
-# Ring King ones, in how their colour PROMs are encoded.
+# Ring King ones, in how their color PROMs are encoded.
 
 # kingofbj (Japan): identical program ROMs to kingofb. Only the character ROM
 # (Japanese text) and one sprite ROM differ -- everything else CRC-matches the
@@ -316,7 +316,7 @@ def build_kingofb(game, found):
     g2 = _assemble(found, regions["gfx2"], 0x18000)
     g3 = _assemble(found, regions["gfx3"], 0x0C000)
 
-    # colour PROMs, straight into the 3 palette regions
+    # color PROMs, straight into the 3 palette regions
     prom_kind, prom_defs = regions["proms"]
     pal = None
     if prom_kind == "user1":

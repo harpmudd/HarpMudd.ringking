@@ -695,7 +695,7 @@ module ringking_game (
         bclr_s3 <= bclr_s2;  bxl_s3 <= bxl_s2;
         bx_s3   <= bx_s2;    bcol_s3 <= bcol_s2;
         // s4: gfx bytes valid -> 3bpp pixel; carry color. Ring King reads gfx4 per
-        //     pixel from BRAM; KoB has no gfx4 and takes the tile's bytes + colour
+        //     pixel from BRAM; KoB has no gfx4 and takes the tile's bytes + color
         //     from the SDRAM prefetch buffer instead.
         pix3_s4 <= kob ? kob_pix3
                        : {g4hi_q[bxl_s3], g4lo_q[{1'b1,bxl_s3}], g4lo_q[{1'b0,bxl_s3}]};
