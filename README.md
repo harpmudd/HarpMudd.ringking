@@ -31,9 +31,8 @@ MCU and no encryption.
 ## The Build
 
 The RTL was written by reverse-mapping the original behaviour out of MAME's
-`dataeast/kingobox.cpp` and `kingobox_v.cpp` — Ernesto Corvi's driver, which is
-what makes a build like this possible at all. Notable pieces, all implemented
-from the hardware description:
+`dataeast/kingobox.cpp` and `kingobox_v.cpp` (Ernesto Corvi's driver). Notable
+pieces, all implemented from the hardware description:
 
 - **Quad Z80** (the `T80` core) on clock-enables in a single clock domain, with
   the two true-dual-port shared-RAM windows (main↔video, main↔sprite), the
@@ -118,34 +117,14 @@ Copy the contents of `dist/` to your Pocket SD card.
 
 ## Credits
 
-This core stands on other people's work. Named properly:
-
-**The original game** — *King of Boxer* / *Ring King*, Woodplace Inc. and
-Data East USA, 1985.
-
-**Ernesto Corvi** — wrote MAME's `kingobox` driver, which documents this
-hardware. Every register, memory map, graphics layout and palette formula in
-this core was derived from reading that driver. Without it there would be
-nothing to build from. (`dataeast/kingobox.cpp`, BSD-3-Clause.)
-
-**The T80 Z80 CPU core** — not a person, but a twenty-year lineage:
-
-| | |
-|---|---|
-| **Daniel Wallner** | original author, 2001–2002 (OpenCores) |
-| **MikeJ** | v300 rework, 2005 (fpgaarcade.com) |
-| **Sean Riddle** | v301 — 8080/Z80 parity and overflow flags |
-| **TobiFlex** | v303 — undocumented DDCB/FDCB opcodes, 2010 |
-| **Sorgelig** | v350 "T80(c)" — timing accuracy; passes ZEXDOC/ZEXALL/Z80Full |
-
-**Adam Gastineau (agg23)** — the SDRAM controller this core streams its sprite
-and background graphics through, plus the `data_loader`, `sound_i2s` and
-`sync_fifo` building blocks. MIT.
-
-**Analogue** — the Analogue Pocket openFPGA framework (APF), used under the
-Pocket EULA.
-
-**HarpMudd** — the FPGA implementation and the Pocket build.
+- **Original arcade game:** Woodplace Inc. / Data East USA (1985)
+- **MAME driver** (`dataeast/kingobox.cpp`) — Ernesto Corvi. The hardware
+  reference this core was built from.
+- **T80 Z80 CPU core** — Daniel Wallner, with later work by MikeJ,
+  Sean Riddle, TobiFlex and Sorgelig
+- **SDRAM controller, data loader, I2S audio** — Adam Gastineau (agg23)
+- **Analogue Pocket openFPGA framework** — Analogue
+- **FPGA core & Pocket build** — HarpMudd
 
 ## License
 
