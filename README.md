@@ -118,7 +118,7 @@ Copy the contents of `dist/` to your Pocket SD card.
 ## Credits
 
 - **Original arcade game:** Woodplace Inc. / Data East USA (1985)
-- **MAME** — hardware reference (`dataeast/kingobox.cpp`, `kingobox_v.cpp`) by Ernesto Corvi
+- **MAME driver** (`dataeast/kingobox.cpp`) — Ernesto Corvi. The hardware reference this core was built from.
 - **FPGA core & Analogue Pocket build:** HarpMudd
 - **Z80 CPU core (T80):** Daniel Wallner, with later work by MikeJ, Sean Riddle, TobiFlex and Sorgelig
 - **SDRAM controller, data loader, I2S audio, sync FIFO:** Adam Gastineau (agg23)
