@@ -1,0 +1,43 @@
+<misterromdescription>
+	<name>King of Boxer (Japan)</name>
+	<setname>kingofbj</setname>
+	<year>1985</year>
+	<manufacturer>Woodplace Inc.</manufacturer>
+	<!--
+	  HarpMudd King of Boxer (Japan) - Analogue Pocket core ROM recipe (no copyrighted data).
+	  Build:  mra kingofbj.mra   then copy the .rom into Assets/ringking/common/.
+	-->
+	<rom index="0" zip="kingofb.zip|kingofbj.zip" md5="none">
+		<part crc="6220bfa2" name="22.d9"></part>
+		<part crc="5782fdd8" name="23.e9"></part>
+		<part repeat="16384"> ff </part>
+		<part crc="3fb39489" name="21.b9"></part>
+		<part crc="c057e28e" name="18.f4"></part>
+		<part crc="060253dd" name="19.h4"></part>
+		<part crc="64c137a4" name="20.j4"></part>
+		<part crc="379f4f84" name="17.j9"></part>
+		<part crc="988a77bf" name="13.d14"></part>
+		<part repeat="32768"> ff </part>
+		<part crc="c58e5121" name="vb14_col.bin"></part>
+		<part repeat="768"> ff </part>
+		<part crc="5ab06f25" name="vb15_col.bin"></part>
+		<part repeat="768"> ff </part>
+		<part crc="1171743f" name="vb16_col.bin"></part>
+		<part repeat="768"> ff </part>
+		<part repeat="1"> 03 </part>
+		<part repeat="29695"> ff </part>
+		<part crc="7b6f390e" name="1.b1"></part>
+		<part crc="cf74ea50" name="3.b4"></part>
+		<part crc="d8b53975" name="5.b7"></part>
+		<part crc="4ab506d2" name="2.b3"></part>
+		<part crc="ecf95a2c" name="4.b5"></part>
+		<part crc="8200cb2b" name="6.b8"></part>
+		<part crc="3d472a22" name="7.d1"></part>
+		<part crc="cc002ea9" name="9.d4"></part>
+		<part crc="23c1b3ee" name="11.d7"></part>
+		<part crc="d6b1b8fe" name="8.d3"></part>
+		<part crc="fce71e5a" name="10.d5"></part>
+		<part crc="3f68b991" name="12.d8"></part>
+		<part repeat="16"> ff </part>
+	</rom>
+</misterromdescription>

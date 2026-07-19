@@ -1,0 +1,40 @@
+<misterromdescription>
+	<name>Ring King (US, Woodplace Inc.)</name>
+	<setname>ringkingw</setname>
+	<year>1985</year>
+	<manufacturer>Woodplace Inc.</manufacturer>
+	<!--
+	  HarpMudd Ring King (US, Woodplace Inc.) - Analogue Pocket core ROM recipe (no copyrighted data).
+	  Build:  mra ringkingw.mra   then copy the .rom into Assets/ringking/common/.
+	-->
+	<rom index="0" zip="kingofb.zip|ringkingw.zip" md5="none">
+		<part crc="8263f517" name="15.d9"></part>
+		<part crc="daadd700" name="16.e9"></part>
+		<part repeat="16384"> ff </part>
+		<part crc="76a73c95" name="14.b9"></part>
+		<part crc="c057e28e" name="18.f4"></part>
+		<part crc="060253dd" name="19.h4"></part>
+		<part crc="64c137a4" name="20.j4"></part>
+		<part crc="379f4f84" name="17.j9"></part>
+		<part crc="e36d4f4f" name="13.d14"></part>
+		<part repeat="32768"> ff </part>
+		<part crc="8ce34029" name="prom2.bin"></part>
+		<part crc="54cfe913" name="prom3.bin"></part>
+		<part crc="913f5975" name="prom1.bin"></part>
+		<part repeat="1"> 07 </part>
+		<part repeat="29695"> ff </part>
+		<part crc="ce6580af" name="1.b1"></part>
+		<part crc="cf74ea50" name="3.b4"></part>
+		<part crc="d8b53975" name="5.b7"></part>
+		<part crc="4ab506d2" name="2.b3"></part>
+		<part crc="ecf95a2c" name="4.b5"></part>
+		<part crc="8200cb2b" name="6.b8"></part>
+		<part crc="019a88b0" name="7.d1"></part>
+		<part crc="bfdc741a" name="9.d4"></part>
+		<part crc="3cc7bdc5" name="11.d7"></part>
+		<part crc="65f1281b" name="8.d3"></part>
+		<part crc="af5013e7" name="10.d5"></part>
+		<part crc="1f6654d6" name="12.d8"></part>
+		<part repeat="16"> ff </part>
+	</rom>
+</misterromdescription>

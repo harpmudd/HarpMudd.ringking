@@ -78,13 +78,28 @@ All six known sets run on this one core — pick the game from the Pocket menu:
 That's every set in MAME's `kingobox` driver. All but `kingofb` are clones that
 take files from the parent, hence the second zip.
 
+Each set ships a `.mra` recipe alongside its `.rom`, so you can build the ROM
+yourself from your own MAME zips with the standard MiSTer `mra` tool:
+
+```
+mra ringking.mra
+```
+
+The `.mra` and the bundled `pack_rom.py` produce byte-identical images — both are
+verified against each other on every build.
+
 *King of Boxer* is the same game on **different hardware** — the original
 Woodplace release, which Data East later relicensed as *Ring King*. The boards
-shuffle their memory maps, sound chip ports, sprite format and input polarity,
-so the core reads a variant byte at load time and switches all of that at
-runtime. The artwork is pixel-identical between the two; only the ROM packing
-differs, so it's unpacked into a common layout when the ROM image is built
-rather than costing a second decoder in the FPGA.
+shuffle their memory maps, sound chip ports, sprite format, input polarity,
+graphics packing and palette format, so the core reads a variant byte at load
+time and switches all of that at runtime.
+
+The artwork is pixel-identical between the boards — only the *packing* differs.
+Every set ships in its original ROM layout and the core adapts to it: the
+graphics differences turn out to be pure addressing (plane offsets, code stride,
+bit order), so the sprite/background gfx are re-addressed as they stream into
+SDRAM and the characters and palette are addressed per board on read. Keeping
+the ROMs in their native layout is what lets every set ship a `.mra`.
 
 ## ROMs
 
@@ -96,9 +111,9 @@ python pack_rom.py            # builds every set it can find
 python pack_rom.py ringking   # or just one
 ```
 
-It matches the required files by CRC32 and writes `ringking.rom` /
-`ringking2.rom` into `Assets/ringking/common/`. A set whose romset you don't
-have is simply skipped. Copy the contents of `dist/` to your Pocket SD card.
+It matches the required files by CRC32 and writes each set's `.rom` into
+`Assets/ringking/common/`. A set whose romset you don't have is simply skipped.
+Copy the contents of `dist/` to your Pocket SD card.
 
 ## Credits
 

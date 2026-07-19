@@ -87,18 +87,56 @@ sdram #(.CLOCK_SPEED_MHZ(48), .BURST_LENGTH(1), .CAS_LATENCY(2)) u_sdram (
 );
 
 // ---- load path: decode the gfx2/gfx3 image regions -> interleaved word+byte_en
-wire dn_g2p0 = dn_wr && (dn_addr >= 19'h20000) && (dn_addr < 19'h28000);
-wire dn_g2p1 = dn_wr && (dn_addr >= 19'h28000) && (dn_addr < 19'h30000);
-wire dn_g2p2 = dn_wr && (dn_addr >= 19'h30000) && (dn_addr < 19'h38000);
-wire dn_g3p0 = dn_wr && (dn_addr >= 19'h38000) && (dn_addr < 19'h3C000);
-wire dn_g3p1 = dn_wr && (dn_addr >= 19'h3C000) && (dn_addr < 19'h40000);
-wire dn_g3p2 = dn_wr && (dn_addr >= 19'h40000) && (dn_addr < 19'h44000);
-wire dn_sg   = dn_g2p0|dn_g2p1|dn_g2p2|dn_g3p0|dn_g3p1|dn_g3p2;
-wire        sg_bank = dn_g3p0|dn_g3p1|dn_g3p2;                    // 1 = gfx3
-wire [14:0] sg_A    = sg_bank ? {1'b0, dn_addr[13:0]} : dn_addr[14:0];
-wire        sg_hw   = dn_g2p2 | dn_g3p2;                          // plane2 -> word+1
+// The board variant byte arrives BEFORE gfx2/gfx3 (that is why the image puts them
+// last) -- the two boards store the same artwork in different packing, and we fix
+// that HERE, by writing each byte to the address the read side already expects,
+// rather than repacking the ROM on the PC. That keeps every set's .rom a plain
+// concatenation of its MAME files, which is what makes an .mra possible for all of
+// them. The sprite engine and bg prefetch are untouched by any of this.
+reg kob_ld = 1'b0;
+always @(posedge clk_sys) if (dn_wr && (dn_addr == 19'h28C00)) kob_ld <= dn_data[0];
+
+// ---- Ring King: planes are 0x8000 apart, byte index == A, bit order LSB = x0.
+wire dn_r_g2p0 = (dn_addr >= 19'h30000) && (dn_addr < 19'h38000);
+wire dn_r_g2p1 = (dn_addr >= 19'h38000) && (dn_addr < 19'h40000);
+wire dn_r_g2p2 = (dn_addr >= 19'h40000) && (dn_addr < 19'h48000);
+wire dn_r_g3p0 = (dn_addr >= 19'h48000) && (dn_addr < 19'h4C000);
+wire dn_r_g3p1 = (dn_addr >= 19'h4C000) && (dn_addr < 19'h50000);
+wire dn_r_g3p2 = (dn_addr >= 19'h50000) && (dn_addr < 19'h54000);
+
+// ---- King of Boxer: SIX sub-regions per gfx set (0x4000 for gfx2, 0x2000 for
+// gfx3), ordered p2R p1R p0R p2L p1L p0L, each holding i = code*16 + y. The read
+// side wants A = code*32 + (left?0:16) + y, i.e. A = {i[hi:4], ~left, i[3:0]} --
+// a pure bit shuffle. Data is bit-REVERSED because this board stores x0 in the MSB.
+wire [2:0] kb2_sub = dn_addr[16:14] - 3'd4;      // gfx2 base 0x30000 -> sub 0..5
+wire [2:0] kb3_sub = dn_addr[15:13] - 3'd4;      // gfx3 base 0x48000 -> sub 0..5
+wire       kb_g2   = (dn_addr >= 19'h30000) && (dn_addr < 19'h48000);
+wire       kb_g3   = (dn_addr >= 19'h48000) && (dn_addr < 19'h54000);
+wire [2:0] kb_sub  = kb_g3 ? kb3_sub : kb2_sub;
+wire       kb_left = (kb_sub >= 3'd3);                            // subs 3,4,5 = left
+reg  [1:0] kb_pl;                                                 // plane = 2 - (sub mod 3)
+always @(*) case (kb_sub)
+    3'd0, 3'd3: kb_pl = 2'd2;
+    3'd1, 3'd4: kb_pl = 2'd1;
+    default:    kb_pl = 2'd0;
+endcase
+wire [13:0] kb_i   = kb_g3 ? {1'b0, dn_addr[12:0]} : dn_addr[13:0];
+wire [14:0] kb_A   = {kb_i[13:4], ~kb_left, kb_i[3:0]};
+wire [7:0]  kb_rev = {dn_data[0], dn_data[1], dn_data[2], dn_data[3],
+                      dn_data[4], dn_data[5], dn_data[6], dn_data[7]};
+
+wire dn_sg   = dn_wr && (kob_ld ? (kb_g2 | kb_g3)
+                               : (dn_r_g2p0|dn_r_g2p1|dn_r_g2p2|
+                                  dn_r_g3p0|dn_r_g3p1|dn_r_g3p2));
+wire        sg_bank = kob_ld ? kb_g3 : (dn_r_g3p0|dn_r_g3p1|dn_r_g3p2);   // 1 = gfx3
+wire [14:0] sg_A    = kob_ld ? kb_A
+                             : (sg_bank ? {1'b0, dn_addr[13:0]} : dn_addr[14:0]);
+wire        sg_hw   = kob_ld ? (kb_pl == 2'd2)                    // plane2 -> word+1
+                             : (dn_r_g2p2 | dn_r_g3p2);
 wire [16:0] sg_word = {sg_bank, sg_A, sg_hw};
-wire [1:0]  sg_be   = (dn_g2p1 | dn_g3p1) ? 2'b10 : 2'b01;        // plane1 = high byte
+wire [1:0]  sg_be   = (kob_ld ? (kb_pl == 2'd1)                   // plane1 = high byte
+                              : (dn_r_g2p1 | dn_r_g3p1)) ? 2'b10 : 2'b01;
+wire [7:0]  sg_data = kob_ld ? kb_rev : dn_data;
 
 // ---- single-clock load FIFO (data_loader has no backpressure; SDRAM writes take
 // ~10 cyc). Depth 16; drains far faster than the loader fills. Same clock => no
@@ -108,7 +146,7 @@ reg  [4:0]  wf_w = 5'd0, wf_r = 5'd0;
 wire        wf_empty = (wf_w == wf_r);
 wire [26:0] wf_dout  = wf[wf_r[3:0]];
 always @(posedge clk_sys) if (dn_sg) begin
-    wf[wf_w[3:0]] <= {sg_word, sg_be, dn_data};
+    wf[wf_w[3:0]] <= {sg_word, sg_be, sg_data};
     wf_w <= wf_w + 5'd1;
 end
 

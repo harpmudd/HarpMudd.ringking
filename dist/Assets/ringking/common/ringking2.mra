@@ -1,0 +1,34 @@
+<misterromdescription>
+	<name>Ring King (US set 2)</name>
+	<setname>ringking2</setname>
+	<year>1985</year>
+	<manufacturer>Woodplace Inc. (Data East USA license)</manufacturer>
+	<!--
+	  HarpMudd Ring King (US set 2) - Analogue Pocket core ROM recipe (no copyrighted data).
+	  Build:  mra ringking2.mra   then copy the .rom into Assets/ringking/common/.
+	-->
+	<rom index="0" zip="kingofb.zip|ringking2.zip" md5="none">
+		<part crc="086921ea" name="rkngm1.bin"></part>
+		<part crc="c0b636a4" name="rkngm2.bin"></part>
+		<part crc="d9dc1a0a" name="rkngtram.bin"></part>
+		<part crc="1d5d6c6b" name="cx12.4ef"></part>
+		<part crc="64c137a4" name="20.j4"></part>
+		<part crc="880b8aa7" name="cx00.4c"></part>
+		<part crc="dbd7c1c2" name="cx08.13b"></part>
+		<part crc="37a082cf" name="cx09.17d"></part>
+		<part crc="ab9446c5" name="cx10.17e"></part>
+		<part crc="0e723a83" name="82s135.2a"></part>
+		<part repeat="768"> ff </part>
+		<part crc="d345cbb3" name="82s129.1a"></part>
+		<part repeat="1792"> ff </part>
+		<part repeat="1"> 00 </part>
+		<part repeat="29695"> ff </part>
+		<part crc="506a2ed9" name="cx04.11j"></part>
+		<part crc="009dde6a" name="cx02.8j"></part>
+		<part crc="d819a3b2" name="cx06.13j"></part>
+		<part crc="682fd1c4" name="cx03.9j"></part>
+		<part crc="85130b46" name="cx01.7j"></part>
+		<part crc="f7c4f3dc" name="cx05.12j"></part>
+		<part repeat="16"> ff </part>
+	</rom>
+</misterromdescription>

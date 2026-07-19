@@ -75,10 +75,18 @@ module ringking_game (
     // 0 = Ring King board, 1 = King of Boxer board. Same game, different board:
     // different memory maps, different AY IO ports, a scrambled spriteram offset,
     // and a bg that comes from the sprite gfx instead of a dedicated gfx4.
-    // (The gfx/palette bit-packing differences are normalised by pack_rom, so the
-    // decode paths below are shared.)
-    reg kob = 1'b0;                                   // 1 = King of Boxer board
-    always @(posedge clk_sys) if (ld & (dn_addr == 19'h4C200)) kob <= dn_data[0];
+    // Gfx are stored in each board's NATIVE packing (so every set can ship an .mra);
+    // the sprite/bg gfx are un-packed by the SDRAM load path in core_game.vh, and
+    // the chars + palette are addressed per board right here.
+    reg kob  = 1'b0;   // 1 = King of Boxer board
+    reg palw = 1'b0;   // 1 = ringkingw raw user1 prom addressing
+    reg pal3 = 1'b0;   // 1 = 3 separate R/G/B proms. NOT the same flag as kob:
+                       // ringking3 is a KoB board shipping Ring-King-format proms.
+    always @(posedge clk_sys) if (ld & (dn_addr == 19'h28C00)) begin
+        kob    <= dn_data[0];   // 1 = King of Boxer board
+        pal3   <= dn_data[1];   // 1 = 3 separate R/G/B proms (0 = Ring King packed)
+        palw   <= dn_data[2];   // 1 = ringkingw raw 'user1' prom addressing
+    end
 
     // =========================================================================
     // ROM image write ports (byte load, dn_addr into the flat image). All BRAM
@@ -350,23 +358,34 @@ module ringking_game (
     reg [7:0] gfx4_lo [0:16383];  reg [7:0] g4lo_q;
     reg [7:0] gfx4_hi [0:16383];  reg [7:0] g4hi_q;  reg [13:0] gfx4_addr;
     always @(posedge clk_sys) begin
-        if (ld & (dn_addr >= 19'h44000) & (dn_addr < 19'h48000)) gfx4_lo[dn_addr[13:0]] <= dn_data;
-        if (ld & (dn_addr >= 19'h48000) & (dn_addr < 19'h4C000)) gfx4_hi[dn_addr[13:0]] <= dn_data;
+        if (ld & (dn_addr >= 19'h20000) & (dn_addr < 19'h24000)) gfx4_lo[dn_addr[13:0]] <= dn_data;
+        if (ld & (dn_addr >= 19'h24000) & (dn_addr < 19'h28000)) gfx4_hi[dn_addr[13:0]] <= dn_data;
     end
     always @(posedge clk_vid) begin g4lo_q <= gfx4_lo[gfx4_addr]; g4hi_q <= gfx4_hi[gfx4_addr]; end
 
     // color PROMs (256 B each, image 0x4C000/0x4C100). PROM0: R=hi nibble, G=lo;
     // PROM1: B=lo nibble. Read at the composed pen; resnet 4->8 applied at output.
-    reg [7:0] prom0 [0:255];  reg [7:0] p0_q;
-    reg [7:0] prom1 [0:255];  reg [7:0] p1_q;  reg [7:0] pal_addr;
+    reg [7:0] prom0 [0:1023]; reg [7:0] p0_q;
+    reg [7:0] prom1 [0:1023]; reg [7:0] p1_q;  reg [7:0] pal_addr;
+    reg [7:0] prom2 [0:1023]; reg [7:0] p2_q;   // King of Boxer's 3rd (blue) prom
+    reg [7:0] spal_addr;
+    // ringkingw ships RAW 'user1' proms: the 256 live entries sit 8-of-every-16
+    // across 0x400. Undo that with a pure address bit-shuffle (verified exact).
+    wire [9:0] pal_ixd = palw ? {pal_addr[7:6], 1'b0, pal_addr[5:3], 1'b0, pal_addr[2:0]}
+                              : {2'b00, pal_addr};
+    wire [9:0] pal_ixs = palw ? {spal_addr[7:6], 1'b0, spal_addr[5:3], 1'b0, spal_addr[2:0]}
+                              : {2'b00, spal_addr};
     always @(posedge clk_sys) begin
-        if (ld & (dn_addr >= 19'h4C000) & (dn_addr < 19'h4C100)) prom0[dn_addr[7:0]] <= dn_data;
-        if (ld & (dn_addr >= 19'h4C100) & (dn_addr < 19'h4C200)) prom1[dn_addr[7:0]] <= dn_data;
+        if (ld & (dn_addr >= 19'h28000) & (dn_addr < 19'h28400)) prom0[dn_addr[9:0]] <= dn_data;
+        if (ld & (dn_addr >= 19'h28400) & (dn_addr < 19'h28800)) prom1[dn_addr[9:0]] <= dn_data;
+        if (ld & (dn_addr >= 19'h28800) & (dn_addr < 19'h28C00)) prom2[dn_addr[9:0]] <= dn_data;
     end
-    always @(posedge clk_vid) begin p0_q <= prom0[pal_addr]; p1_q <= prom1[pal_addr]; end
+    always @(posedge clk_vid) begin p0_q <= prom0[pal_ixd];
+        p1_q <= prom1[pal_ixd]; p2_q <= prom2[pal_ixd]; end
     // 2nd PROM read port for the sprite path (256 B -> tiny even if it maps to logic)
-    reg [7:0] sp0_q, sp1_q;  reg [7:0] spal_addr;
-    always @(posedge clk_vid) begin sp0_q <= prom0[spal_addr]; sp1_q <= prom1[spal_addr]; end
+    reg [7:0] sp0_q, sp1_q, sp2_q;
+    always @(posedge clk_vid) begin sp0_q <= prom0[pal_ixs];
+        sp1_q <= prom1[pal_ixs]; sp2_q <= prom2[pal_ixs]; end
 
     // gfx2 (sprites bank0) + gfx3 (bank1) now live in SDRAM -- they were 144K of
     // BRAM (96 M10K + 48) which the sound ROM needs back. The engine fetches them
@@ -606,9 +625,14 @@ module ringking_game (
         // align phase to disp_fg_q/disp_fc_q (valid 1 clk after their address)
         px0d <= px0;  py0d <= py0;
         // s2: tile code/attr valid -> gfx byte address; carry attrs + col phase
-        gfx1_addr <= ({4'd0, disp_fc_q[0], disp_fg_q} << 3)      // code9 * 8
-                     + {10'd0, (3'd7 - py0d)}                    // row: +(7-py)
-                     + (px0d[2] ? 13'h1000 : 13'd0);            // right half (cols 4-7)
+        // Ring King: code*8 + (7-py), right half (cols 4-7) at +0x1000, bank = nibble.
+        // King of Boxer: 8 px per byte, bank IS the 0x1000 offset -> code*8 + py.
+        gfx1_addr <= kob ? (({4'd0, disp_fc_q[0], disp_fg_q} << 3)
+                            + {10'd0, py0d}
+                            + (disp_fc_q[1] ? 13'h1000 : 13'd0))
+                         : (({4'd0, disp_fc_q[0], disp_fg_q} << 3)   // code9 * 8
+                            + {10'd0, (3'd7 - py0d)}                 // row: +(7-py)
+                            + (px0d[2] ? 13'h1000 : 13'd0));         // right half
         bnk_a <= disp_fc_q[1];  clr_a <= disp_fc_q[5:3];  col_a <= px0d;
         // align attrs/col to gfx1_q (valid 1 clk after gfx1_addr)
         bnk_b <= bnk_a;  clr_b <= clr_a;  col_b <= col_a;
@@ -616,8 +640,10 @@ module ringking_game (
         // (rom[o/8] >> (7-(o&7)))&1, so charlayout1 xoffset {7,6,5,4} => col0=bit0..
         // col3=bit3 (bank0 = LOW nibble), charlayout2 {3,2,1,0} => bits 4-7 (bank1 =
         // HIGH nibble). bit = bank ? 4+(col&3) : (col&3).
-        pix_c <= gfx1_q[ bnk_b ? {1'b1, col_b[1:0]}     // bank1 (charlayout2): bits 4-7
-                               : {1'b0, col_b[1:0]} ];  // bank0 (charlayout1): bits 0-3
+        // KoB stores 8 px MSB-first in one byte: pixel x = bit (7-x).
+        pix_c <= kob ? gfx1_q[3'd7 - col_b]
+                     : gfx1_q[ bnk_b ? {1'b1, col_b[1:0]}    // bank1: bits 4-7
+                                     : {1'b0, col_b[1:0]} ]; // bank0: bits 0-3
         clr_c <= clr_b;
     end
 
@@ -677,9 +703,9 @@ module ringking_game (
         // s5: present pen -> PROM
         pal_addr <= {bclr_s4, pix3_s4};
         // s6: PROM valid -> resnet RGB
-        bg_r <= resnet(p0_q[7:4]);   // R = PROM0 hi nibble
-        bg_g <= resnet(p0_q[3:0]);   // G = PROM0 lo nibble
-        bg_b <= resnet(p1_q[3:0]);   // B = PROM1 lo nibble
+        bg_r <= resnet(pal3 ? p0_q[3:0] : p0_q[7:4]);
+        bg_g <= resnet(pal3 ? p1_q[3:0] : p0_q[3:0]);
+        bg_b <= resnet(pal3 ? p2_q[3:0] : p1_q[3:0]);
     end
 
     // =========================================================================
@@ -851,8 +877,10 @@ module ringking_game (
         sd1 <= spr_disp_q; sd2 <= sd1; sd3 <= sd2; sd4 <= sd3;   // delay 2..5
         spal_addr <= sd4[7:0];  sop6 <= sd4[8];                  // delay6 (pen->PROM)
         sop7 <= sop6;                                            // delay7 (align sp_q)
-        spr_r <= resnet(sp0_q[7:4]);  spr_g <= resnet(sp0_q[3:0]);
-        spr_b <= resnet(sp1_q[3:0]);  sop8 <= sop7;              // delay8
+        spr_r <= resnet(pal3 ? sp0_q[3:0] : sp0_q[7:4]);
+        spr_g <= resnet(pal3 ? sp1_q[3:0] : sp0_q[3:0]);
+        spr_b <= resnet(pal3 ? sp2_q[3:0] : sp1_q[3:0]);
+        sop8  <= sop7;                                           // delay8
     end
 
     // ---- control (blank/sync) delayed to match; composite fg-over-bg ----------

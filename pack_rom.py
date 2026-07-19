@@ -45,15 +45,35 @@ DEFAULT_ZIP_DIR = next(
     HERE)
 ASSETS_DIR     = os.path.join(HERE, "dist", "Assets", "ringking", "common")
 
-# 0x4C200 = board variant byte, snooped by the FPGA during load:
-#   0 = Ring King board (dedicated gfx4 bg, D800/E000 maps, AY at 02/03)
-#   1 = King of Boxer board (bg from the sprite gfx, F800/FC00 maps, AY at 08/0c)
-# The image is padded past it on purpose: a variant byte sitting in the image's
-# LAST 32-bit word does not reliably land (see the multi-game notes).
-VARIANT_OFFSET = 0x4C200
-ROM_IMAGE_SIZE = 0x4C210
-VAR_RINGKING = 0
-VAR_KINGOFB  = 1
+# 0x28300 = variant byte, snooped by the FPGA during load. TWO independent bits:
+#   bit0 board   0 = Ring King  (dedicated gfx4 bg, D800/E000 maps, AY at 02/03)
+#                1 = King of Boxer (bg from the sprite gfx, F800/FC00, AY 08/0c)
+#   bit1 palette 0 = Ring King's 2 packed proms (red = high nibble of region 0)
+#                1 = 3 separate R/G/B proms
+#   bit2 palette addressing: 1 = ringkingw's raw 'user1' proms, which store the
+#                256 used entries spread 8-of-every-16 across 0x400. The FPGA undoes
+#                that with a pure address bit-shuffle, so the ROM stays a plain copy.
+# The two are NOT the same flag: ringking3 runs a King of Boxer BOARD but ships
+# Ring-King-format proms.
+#
+# It must load BEFORE gfx2/gfx3, because the SDRAM write path remaps addresses per
+# board -- hence the layout below puts those two regions last.
+#   0x00000 main 48K | 0x0C000 video 16K | 0x10000 sound 48K | 0x1C000 sprite cpu 8K
+#   0x1E000 gfx1 8K  | 0x20000 gfx4 32K (Ring King bg only)
+#   0x28000 pal r0 | 0x28400 pal r1 | 0x28800 pal r2 | 0x28C00 variant  (0x400 each)
+#   0x30000 gfx2 0x18000 | 0x48000 gfx3 0xC000   (both 0x8000/0x4000 ALIGNED so the
+#   loader's SDRAM write index stays a pure bit-slice)
+# The image is padded past the variant byte on purpose: a variant byte sitting in
+# the image's LAST 32-bit word does not reliably land (see the multi-game notes).
+VARIANT_OFFSET = 0x28C00
+ROM_IMAGE_SIZE = 0x54010
+PAL_R0, PAL_R1, PAL_R2 = 0x28000, 0x28400, 0x28800   # 0x400 each: ringkingw
+                                                     # ships RAW 0x400 user1 proms
+GFX1_OFF, GFX2_OFF, GFX3_OFF = 0x1E000, 0x30000, 0x48000
+VAR_RINGKING = 0                 # Ring King board + packed proms
+VAR_KINGOFB  = 1 | 2             # King of Boxer board + 3 separate proms
+VAR_KOB_RKPAL = 1                # King of Boxer board + Ring King packed proms
+VAR_KINGOFB_W = 1 | 2 | 4        # King of Boxer board + raw user1 proms
 
 # The two supported sets run on IDENTICAL hardware (same machine config, video,
 # PROMs and sound IO), so the FPGA needs no variant byte -- they differ only in
@@ -67,20 +87,23 @@ COMMON_DEFS = [
     (0x880b8aa7, 0x2000, "cx00.4c   (sprite 0000-1FFF)", 0x1C000),
     # gfx1 characters (8K)
     (0xdbd7c1c2, 0x2000, "cx08.13b  (gfx1 chars)",       0x1E000),
-    # gfx2 sprites (3x32K)
-    (0x506a2ed9, 0x8000, "cx04.11j  (gfx2 sprites 0)",   0x20000),
-    (0x009dde6a, 0x8000, "cx02.8j   (gfx2 sprites 1)",   0x28000),
-    (0xd819a3b2, 0x8000, "cx06.13j  (gfx2 sprites 2)",   0x30000),
-    # gfx3 (3x16K)
-    (0x682fd1c4, 0x4000, "cx03.9j   (gfx3 0)",           0x38000),
-    (0x85130b46, 0x4000, "cx01.7j   (gfx3 1)",           0x3C000),
-    (0xf7c4f3dc, 0x4000, "cx05.12j  (gfx3 2)",           0x40000),
     # gfx4 tiles (2x16K)
-    (0x37a082cf, 0x4000, "cx09.17d  (gfx4 tiles 0)",     0x44000),
-    (0xab9446c5, 0x4000, "cx10.17e  (gfx4 tiles 1)",     0x48000),
-    # color PROMs (82s135 = red+green, 82s129 = blue)
-    (0x0e723a83, 0x0100, "82s135.2a (PROM red+green)",   0x4C000),
-    (0xd345cbb3, 0x0100, "82s129.1a (PROM blue)",        0x4C100),
+    (0x37a082cf, 0x4000, "cx09.17d  (gfx4 tiles 0)",     0x20000),
+    (0xab9446c5, 0x4000, "cx10.17e  (gfx4 tiles 1)",     0x24000),
+    # color PROMs. Ring King packs red+green into ONE prom (red = high nibble),
+    # so it fills palette regions 0 and 1 and leaves region 2 unused; the King of
+    # Boxer boards ship 3 separate proms and fill all three. See PAL_R/G/B below.
+    (0x0e723a83, 0x0100, "82s135.2a (PROM red+green)",   0x28000),
+    (0xd345cbb3, 0x0100, "82s129.1a (PROM blue)",        0x28400),
+    # gfx2 sprites (3x32K) and gfx3 (3x16K) live AFTER the variant byte -- see the
+    # layout note at the top: the loader is sequential and the SDRAM write path has
+    # to know which board it is before these arrive.
+    (0x506a2ed9, 0x8000, "cx04.11j  (gfx2 sprites 0)",   0x30000),
+    (0x009dde6a, 0x8000, "cx02.8j   (gfx2 sprites 1)",   0x38000),
+    (0xd819a3b2, 0x8000, "cx06.13j  (gfx2 sprites 2)",   0x40000),
+    (0x682fd1c4, 0x4000, "cx03.9j   (gfx3 0)",           0x48000),
+    (0x85130b46, 0x4000, "cx01.7j   (gfx3 1)",           0x4C000),
+    (0xf7c4f3dc, 0x4000, "cx05.12j  (gfx3 2)",           0x50000),
 ]
 
 # Ring King (US set 1) -- the Data East USA license set. romset: ringking.zip
@@ -109,9 +132,9 @@ GAMES = {
     "kingofbj":  (None, "kingofbj.rom", "King of Boxer (Japan)",
                   "kingofbj.zip + kingofb.zip", VAR_KINGOFB),
     "ringkingw": (None, "ringkingw.rom", "Ring King (US, Woodplace Inc.)",
-                  "ringkingw.zip + kingofb.zip", VAR_KINGOFB),
+                  "ringkingw.zip + kingofb.zip", VAR_KINGOFB_W),
     "ringking3": (None, "ringking3.rom", "Ring King (US set 3)",
-                  "ringking3.zip + kingofb.zip", VAR_KINGOFB),
+                  "ringking3.zip + kingofb.zip", VAR_KOB_RKPAL),
 }
 
 # =============================================================================
@@ -180,6 +203,7 @@ RINGKINGW_CPU = [
 # ringkingw's PROMs sit in a 3 x 0x400 "user1" region in a different encoding.
 RINGKINGW_USER1 = [(0x8ce34029, 0x400, 0x000), (0x54cfe913, 0x400, 0x400),
                    (0x913f5975, 0x400, 0x800)]              # prom2 R, prom3 G, prom1 B
+# ...stored RAW (see VAR bit2): the FPGA does the 8-of-16 selection by address.
 
 # ringking3 is the only set with a THIRD main program ROM (48K, not 32K).
 RINGKING3_CPU = [
@@ -231,79 +255,6 @@ def _assemble(found, parts, size):
     return buf
 
 
-def normalise_kingofb_gfx(g1, g2, g3):
-    """kingofb packing -> Ring King packing (same pixels, different bit layout)."""
-    # ---- chars: kingofb charlayout (bank = a 0x1000 byte offset, MSB-first x)
-    #      -> rk_charlayout1/2 (bank = nibble; right half of a row at byte +0x1000)
-    out1 = bytearray(0x2000)
-    for bank in range(2):
-        for code in range(512):
-            for y in range(8):
-                for x in range(8):
-                    px = _rdbit(g1, (bank * 0x1000 + code * 8 + y) * 8 + x)
-                    if not px:
-                        continue
-                    byte = code * 8 + (7 - y) + (0x1000 if x >= 4 else 0)
-                    bit = (4 + (x & 3)) if bank else (x & 3)
-                    out1[byte] |= 1 << bit
-    # ---- 16x16 3bpp: kingofb spritelayout/tilelayout -> rk_spritelayout/rk_tilelayout
-    def conv16(src, ntiles, kb_unit, rk_unit, out_size):
-        out = bytearray(out_size)
-        kb_plane = [2 * kb_unit * 8, 1 * kb_unit * 8, 0]
-        kb_x = [3 * kb_unit * 8 + i for i in range(8)] + list(range(8))
-        rk_plane = [0, 1 * rk_unit * 8, 2 * rk_unit * 8]
-        rk_x = [7, 6, 5, 4, 3, 2, 1, 0] + [16 * 8 + i for i in (7, 6, 5, 4, 3, 2, 1, 0)]
-        for code in range(ntiles):
-            for y in range(16):
-                yo = y * 8
-                for x in range(16):
-                    for p in range(3):
-                        if _rdbit(src, code * 128 + kb_plane[p] + kb_x[x] + yo):
-                            _wrbit(out, code * 256 + rk_plane[p] + rk_x[x] + yo, 1)
-        return out
-    out2 = conv16(g2, 1024, 0x4000, 0x8000, 0x18000)   # sprites
-    out3 = conv16(g3, 512,  0x2000, 0x4000, 0x0C000)   # tiles
-    return out1, out2, out3
-
-
-def init_ringkingw_proms(user1):
-    """MAME init_ringkingw: re-encode the 3 x 0x400 'user1' PROMs into kingofb's
-    3 x 0x100 R/G/B layout. Only the first 8 of every 16 entries are used, and the
-    result is 4 blocks of 0x40 -- hence the i-skip and the k loop."""
-    r, g, b = bytearray(0x100), bytearray(0x100), bytearray(0x100)
-    i = 0
-    for j in range(0x40):
-        if (i & 0xF) == 8:
-            i += 8
-        for k in range(4):
-            r[j + 0x40 * k] = user1[i + 0x000 + 0x100 * k]
-            g[j + 0x40 * k] = user1[i + 0x400 + 0x100 * k]
-            b[j + 0x40 * k] = user1[i + 0x800 + 0x100 * k]
-        i += 1
-    return r, g, b
-
-
-def init_ringking3_proms(rg, bb):
-    """MAME init_ringking3: Ring King packs red in the HIGH nibble and green in the
-    LOW nibble of one PROM. Expand it back into separate R/G so the kingofb path can
-    treat every set identically. (Round trip is exact: normalise_kingofb_proms then
-    re-packs R<<4|G, giving the original byte straight back.)"""
-    r = bytearray((v >> 4) & 0x0F for v in rg)
-    g = bytearray(v & 0x0F for v in rg)
-    b = bytearray(v & 0x0F for v in bb)
-    return r, g, b
-
-
-def normalise_kingofb_proms(r, g, b):
-    """3 x 4-bit PROMs (R/G/B) -> our 2-PROM packed format: [0]=R<<4|G, [1]=B."""
-    p0 = bytearray(0x100)
-    p1 = bytearray(0x100)
-    for i in range(0x100):
-        p0[i] = ((r[i] & 0x0F) << 4) | (g[i] & 0x0F)
-        p1[i] = b[i] & 0x0F
-    return p0, p1
-
-
 def crc32_of(data):
     return zlib.crc32(data) & 0xFFFFFFFF
 
@@ -318,6 +269,24 @@ def load_dir_by_crc(zip_dir):
         except Exception as e:
             print(f"  WARNING: could not read {zname}: {e}")
     return found
+
+
+def flat_defs(game):
+    """Flat (crc,size,desc,offset) list for a King of Boxer group set, so the .mra
+    generator can treat it like any other set. Every region is a plain copy now."""
+    r = KOB_SETS[game]
+    out = list(r["cpu"])
+    for key, base in (("gfx1", GFX1_OFF), ("gfx2", GFX2_OFF), ("gfx3", GFX3_OFF)):
+        for crc, sz, off in r[key]:
+            out.append((crc, sz, f"{game} {key}+0x{off:X}", base + off))
+    kind, defs = r["proms"]
+    if kind == "user1":
+        for (crc, sz, off), base in zip(defs, (PAL_R0, PAL_R1, PAL_R2)):
+            out.append((crc, sz, f"{game} user1 prom", base))
+    else:
+        for (crc, tag), base in zip(defs, (PAL_R0, PAL_R1, PAL_R2)):
+            out.append((crc, 0x100, f"{game} prom {tag}", base))
+    return out
 
 
 def build_kingofb(game, found):
@@ -339,43 +308,40 @@ def build_kingofb(game, found):
         image[offset:offset + size] = data
         print(f"  OK   {d}  @ 0x{offset:05X}")
 
-    # native gfx regions
+    # gfx regions -- PLAIN COPIES in the board's NATIVE packing. The FPGA addresses
+    # this layout directly (different byte address + MSB-first bit order), so there
+    # is no repacking here. That is what lets every set have an .mra: the recipe
+    # only ever concatenates whole files.
     g1 = _assemble(found, regions["gfx1"], 0x2000)
     g2 = _assemble(found, regions["gfx2"], 0x18000)
     g3 = _assemble(found, regions["gfx3"], 0x0C000)
 
-    # colour PROMs -> R/G/B, however this set happens to encode them
+    # colour PROMs, straight into the 3 palette regions
     prom_kind, prom_defs = regions["proms"]
-    rgb = None
+    pal = None
     if prom_kind == "user1":
-        user1 = _assemble(found, prom_defs, 0x0C00)
-        if user1 is not None:
-            rgb = init_ringkingw_proms(user1)
-            print("  re-encoding 'user1' PROMs (init_ringkingw)...")
+        raw = [found.get(c) for c, _, _ in prom_defs]
+        if not any(p is None for p in raw):
+            pal = tuple(raw)                      # RAW 0x400 blocks; FPGA re-addresses
+            print("  storing raw 'user1' PROMs (FPGA does the 8-of-16 selection)...")
     else:
         raw = [found.get(c) for c, _ in prom_defs]
         if not any(p is None for p in raw):
-            if prom_kind == "rk":
-                rgb = init_ringking3_proms(raw[0], raw[1])
-                print("  expanding Ring King's packed PROMs (init_ringking3)...")
-            else:
-                rgb = tuple(raw)
-    if g1 is None or g2 is None or g3 is None or rgb is None:
+            pal = tuple(raw) if prom_kind == "rgb" else (raw[0], raw[1], None)
+    if g1 is None or g2 is None or g3 is None or pal is None:
         print(f"  MISSING gfx/PROM ROMs -- {game} needs: {romsets}")
         return False
 
-    print("  normalising gfx (kingofb packing -> Ring King packing)...")
-    n1, n2, n3 = normalise_kingofb_gfx(g1, g2, g3)
-    image[0x1E000:0x1E000 + len(n1)] = n1       # gfx1 chars
-    image[0x20000:0x20000 + len(n2)] = n2       # gfx2 sprites
-    image[0x38000:0x38000 + len(n3)] = n3       # gfx3 tiles
-    # gfx4 (0x44000) intentionally left blank: this board has no dedicated bg gfx,
+    image[GFX1_OFF:GFX1_OFF + len(g1)] = g1     # chars   (native)
+    image[GFX2_OFF:GFX2_OFF + len(g2)] = g2     # sprites (native)
+    image[GFX3_OFF:GFX3_OFF + len(g3)] = g3     # tiles   (native)
+    # gfx4 (0x20000) intentionally left blank: this board has no dedicated bg gfx,
     # it draws the bg out of the sprite gfx (an RTL variant, not a data one).
-    p0, p1 = normalise_kingofb_proms(*rgb)
-    image[0x4C000:0x4C100] = p0
-    image[0x4C100:0x4C200] = p1
+    for off, data in zip((PAL_R0, PAL_R1, PAL_R2), pal):
+        if data is not None:
+            image[off:off + len(data)] = data
     image[VARIANT_OFFSET] = variant
-    print("  OK   gfx1/gfx2/gfx3 normalised, 3 PROMs -> 2 packed")
+    print(f"  OK   gfx1/gfx2/gfx3 native, palette -> regions (variant {variant})")
 
     os.makedirs(os.path.dirname(out_rom), exist_ok=True)
     with open(out_rom, "wb") as f:
