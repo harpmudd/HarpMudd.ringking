@@ -117,27 +117,13 @@ Copy the contents of `dist/` to your Pocket SD card.
 
 ## Credits
 
-**Reused from others, largely unmodified:**
-
-| Component | Author | Path |
-|---|---|---|
-| Z80 CPU core (T80) | Daniel Wallner, with later work by MikeJ, Sean Riddle, TobiFlex and Sorgelig | `src/fpga/rtl/T80/` |
-| SDRAM controller, data loader, I2S audio, sync FIFO | Adam Gastineau (agg23) | `src/fpga/core/` |
-| openFPGA framework (APF), bridge command handler, reference `core_top` | Analogue | `src/fpga/apf/`, `src/fpga/core/` |
-| PLL and datatable megafunctions | Intel/Altera (Quartus-generated) | `src/fpga/core/`, `src/fpga/apf/` |
-
-**Hardware reference:** MAME's `kingobox` driver by **Ernesto Corvi**
-(`dataeast/kingobox.cpp`, `kingobox_v.cpp`, BSD-3-Clause). The memory maps,
-register behaviour, graphics layouts, palette weighting and sprite formats
-implemented here were all derived from reading that driver.
-
-**Written for this core (HarpMudd):** the game logic in
-`src/fpga/rtl/ringking_game.v` — CPU wiring and interrupts, the three graphics
-layers, sprite engine and line buffers, the AY-3-8910 and DAC audio path, the
-per-board variant handling — plus `src/fpga/core/core_game.vh`, the ROM
-builder `pack_rom.py`, and the packaging scripts.
-
-**Original arcade game:** Woodplace Inc. / Data East USA (1985).
+- **Original arcade game:** Woodplace Inc. / Data East USA (1985)
+- **MAME** — hardware reference (`dataeast/kingobox.cpp`, `kingobox_v.cpp`) by Ernesto Corvi
+- **FPGA core & Analogue Pocket build:** HarpMudd
+- **Z80 CPU core (T80):** Daniel Wallner, with later work by MikeJ, Sean Riddle, TobiFlex and Sorgelig
+- **SDRAM controller, data loader, I2S audio, sync FIFO:** Adam Gastineau (agg23)
+- **openFPGA framework (APF), bridge command handler, reference `core_top`:** Analogue
+- **PLL and other megafunctions:** Intel/Altera (Quartus-generated)
 
 ## License
 
