@@ -4,11 +4,11 @@
         "metadata": {
             "platform_ids": ["ringking"],
             "shortname": "Ringking",
-            "description": "Ring King (Woodplace / Data East, 1985) - US sets 1 and 2",
+            "description": "Ring King and King of Boxer - all 6 sets, Woodplace / Data East 1985 hardware. Build by HarpMudd.",
             "author": "HarpMudd",
             "url": "https://github.com/harpmudd/HarpMudd.ringking",
             "version": "2.0.0",
-            "date_release": "2026-07-16"
+            "date_release": "2026-07-19"
         },
         "framework": {
             "target_product": "Analogue Pocket",

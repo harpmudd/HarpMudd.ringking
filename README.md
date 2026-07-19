@@ -123,6 +123,12 @@ Copy the contents of `dist/` to your Pocket SD card.
 - **SDRAM controller:** agg23
 - **FPGA core & Analogue Pocket build:** HarpMudd
 
+## License
+
+MIT — see [LICENSE](LICENSE). Bundled third-party HDL (the `T80` CPU core and
+agg23's SDRAM controller) keeps its own copyright notices in the source
+headers; no arcade ROM data is included anywhere in this repository.
+
 ## About / Support
 
 I'm into retro games and the Analogue Pocket, always cooking up something new.
