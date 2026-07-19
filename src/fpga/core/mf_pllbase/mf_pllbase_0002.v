@@ -1,7 +1,5 @@
-// mf_pllbase_0002.v - altera_pll for The Legend of Kage (lkage) Pocket core.
-// Input 74.25 MHz. lkage clocks (CPUs/YM run off clk_sys via clock-enables):
-//   main Z80 6 MHz (12MHz/2), sound Z80 4 MHz (8/2), 2x YM2203 4 MHz (8/2),
-//   pixel 6 MHz (12/2). clk_sys=48 MHz -> 6 MHz = /8 enable, 4 MHz = /12 enable.
+// mf_pllbase_0002.v - altera_pll for the Ring King Pocket core.
+// Input 74.25 MHz. All four Z80s and the AY run off clk_sys via clock enables.
 //   outclk_0: 48.000 MHz (clk_sys - CPUs, YM, BRAM, ROM loader, bridge, audio)
 //   outclk_1:  6.000 MHz (clk_vid - pixel clock + all video BRAM)
 //   outclk_2:  6.000 MHz 90deg (clk_vid_90 - APF DDR video clock)

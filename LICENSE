@@ -51,8 +51,7 @@ licence notice in its source file headers. Those notices must be preserved.
   mf_ddio_bidir_12.*         software licence terms.
 
 The hardware behaviour implemented here was derived from MAME's `kingobox`
-driver by Ernesto Corvi (dataeast/kingobox.cpp, BSD-3-Clause). No MAME source
-code is included in this repository.
+driver by Ernesto Corvi (dataeast/kingobox.cpp, BSD-3-Clause).
 
 No arcade ROM data is included in this repository. ROM images are built by the
 user from romsets they already own.

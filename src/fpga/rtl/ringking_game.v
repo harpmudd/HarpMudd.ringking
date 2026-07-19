@@ -595,8 +595,8 @@ module ringking_game (
     //           half of a char row (cols 4-7) is at byte +0x1000; row -> +(7-py).
     //   colors= 8 RGB primaries: R=color[2], G=color[1], B=color[0].
     // Registered-output BRAMs => data is valid the cycle AFTER its address, so the
-    // carried phase (px/py) is delayed 1 reg per read to stay aligned (the lkage
-    // ROM-latency lesson). PIX_DELAY aligns blank/sync to the pixel; HW-tunable.
+    // carried phase (px/py) is delayed 1 reg per read to stay aligned.
+    // PIX_DELAY aligns blank/sync to the pixel; HW-tunable.
     // =========================================================================
     // MAME visarea y = 16..239: the 224 visible lines sit at tilemap y 16..239
     // (16px cropped top+bottom of the 256-tall map). VOFF=16 maps vcnt 0 -> y 16.

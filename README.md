@@ -129,8 +129,7 @@ Copy the contents of `dist/` to your Pocket SD card.
 **Hardware reference:** MAME's `kingobox` driver by **Ernesto Corvi**
 (`dataeast/kingobox.cpp`, `kingobox_v.cpp`, BSD-3-Clause). The memory maps,
 register behaviour, graphics layouts, palette weighting and sprite formats
-implemented here were all derived from reading that driver. No MAME code is
-included.
+implemented here were all derived from reading that driver.
 
 **Written for this core (HarpMudd):** the game logic in
 `src/fpga/rtl/ringking_game.v` — CPU wiring and interrupts, the three graphics
