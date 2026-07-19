@@ -141,9 +141,8 @@ builder `pack_rom.py`, and the packaging scripts.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Bundled third-party HDL (the `T80` CPU core and
-agg23's SDRAM controller) keeps its own copyright notices in the source
-headers; no arcade ROM data is included anywhere in this repository.
+MIT — see [LICENSE](LICENSE). Bundled third-party HDL keeps its own copyright
+notices in the source headers.
 
 ## About / Support
 
